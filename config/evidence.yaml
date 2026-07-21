@@ -1,0 +1,55 @@
+evidence:
+  - id: SAFETY_PAIN_001
+    type: hard_safety_rule
+    rule: "Reported pain or injury blocks progression and triggers load reduction."
+    allowed_decisions: [reduce]
+
+  - id: LOAD_REDUCE_001
+    type: local_coaching_rule
+    rule: "Reduce load temporarily when recovery or adherence indicates that the current plan is not being tolerated."
+    allowed_decisions: [reduce]
+
+  - id: RECOVERY_TREND_001
+    type: local_coaching_rule
+    rule: "Use repeated recovery and subjective signals, not one isolated wearable score, for weekly changes."
+    allowed_decisions: [reduce, hold]
+
+  - id: COMPLIANCE_001
+    type: local_coaching_rule
+    rule: "Progress only when the athlete is completing at least 80-85 percent of the planned work."
+    allowed_decisions: [progress, change_stimulus, reduce, hold]
+
+  - id: RECOVERY_WEEK_001
+    type: hard_safety_rule
+    rule: "Do not add load or intensity during the configured recovery week."
+    allowed_decisions: [hold, reduce]
+
+  - id: DATA_QUALITY_001
+    type: hard_safety_rule
+    rule: "Hold when there is insufficient activity history to validate a progression."
+    allowed_decisions: [hold]
+
+  - id: PROGRESS_SMALL_001
+    type: local_coaching_rule
+    rule: "When compliance and recovery are stable, progress weekly load in small steps no greater than five percent."
+    allowed_decisions: [progress]
+
+  - id: ONE_VARIABLE_001
+    type: hard_safety_rule
+    rule: "Do not increase total volume and interval intensity in the same weekly proposal."
+    allowed_decisions: [progress, change_stimulus, hold]
+
+  - id: PLATEAU_001
+    type: local_coaching_rule
+    rule: "A stable multi-week plateau with high compliance can justify changing one training stimulus while holding volume."
+    allowed_decisions: [change_stimulus]
+
+  - id: HARD_SESSION_LIMIT_001
+    type: hard_safety_rule
+    rule: "Any intensity change must remain within the configured weekly hard-session limit and one hard session per day."
+    allowed_decisions: [change_stimulus, hold, reduce]
+
+  - id: HOLD_WHEN_UNCERTAIN_001
+    type: hard_safety_rule
+    rule: "When trends conflict or uncertainty is high, keep the current plan unchanged."
+    allowed_decisions: [hold]

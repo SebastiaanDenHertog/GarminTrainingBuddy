@@ -1,0 +1,22 @@
+services:
+  triathlon-advisor:
+    build: .
+    container_name: garmin-adaptive-triathlon-advisor-v3
+    restart: unless-stopped
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    env_file:
+      - .env
+    environment:
+      TOKEN_DIR: /tokens
+      DATA_DIR: /data
+      PLAN_CONFIG: /config/plan.yaml
+      EVIDENCE_CONFIG: /config/evidence.yaml
+      HOME: /tmp
+    volumes:
+      - ./tokens:/tokens
+      - ./data:/data
+      - ./config:/config:ro
+    # When Ollama runs as another Compose service, add both services to the same
+    # network and use AI_BASE_URL=http://ollama:11434/v1.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

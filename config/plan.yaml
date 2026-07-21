@@ -1,0 +1,131 @@
+# V3: adaptive triathlon base plan.
+#
+# You choose which days are available. A blank list is a rest day. Add two
+# entries to one day for a double session. The planner will never create more
+# than max_sessions_per_day and will keep at most one hard session per day.
+#
+# Garmin schedules workouts by DATE. The optional time is added to the workout
+# description as guidance; Garmin Connect does not receive it as a timed event.
+
+plan:
+  name_prefix: "AI BASE V3"
+  horizon_days: 21
+  plan_length_weeks: 52
+
+  # Total swim + bike + run minutes per week before block and coach adjustments.
+  base_weekly_minutes: 360
+  min_weekly_minutes: 240
+  max_weekly_minutes: 660
+
+  # Three building weeks followed by one reduced week.
+  block_growth: 0.04
+  recovery_week_factor: 0.72
+
+  # Double-session and intensity safety limits.
+  max_sessions_per_day: 2
+  max_hard_sessions_per_day: 1
+  max_hard_sessions_per_week: 2
+
+  # The weekly coach can only adjust these generated values after validation.
+  # They are normally injected from data/coach/active_adjustment.json.
+  coach_volume_multiplier: 1.0
+  sport_weight_multipliers:
+    run: 1.0
+    bike: 1.0
+    swim: 1.0
+  quality_progression:
+    run: 0
+    bike: 0
+    swim: 0
+
+  # Use the previous 28 days of Garmin activities as a starting-load guardrail.
+  use_recent_garmin_load: true
+  recent_load_days: 28
+
+  # Morning recovery adaptations.
+  amber_duration_factor: 0.72
+  red_duration_minutes: 30
+  # "recovery" schedules one easy session; "rest" clears the day.
+  red_action: recovery
+
+  pool_length_m: 25
+  swim_meters_per_hour: 2200
+
+training_days:
+  monday: []
+
+  # A separated double day: easy technique swim in the morning and the week's
+  # primary run-quality session later. Change or remove either entry freely.
+  tuesday:
+    - sport: swim
+      role: technique
+      time: "06:30"
+      primary: false
+      minimum_gap_hours: 6
+      weight: 0.70
+      min_minutes: 30
+      max_minutes: 60
+
+    - sport: run
+      role: quality
+      time: "17:30"
+      primary: true
+      weight: 0.95
+      min_minutes: 40
+      max_minutes: 80
+
+  wednesday:
+    - sport: bike
+      role: easy
+      time: "17:30"
+      primary: true
+      weight: 0.85
+      min_minutes: 40
+      max_minutes: 75
+
+  thursday:
+    - sport: run
+      role: easy
+      time: "17:30"
+      primary: true
+      weight: 0.80
+      min_minutes: 35
+      max_minutes: 65
+
+  friday:
+    - sport: swim
+      role: endurance
+      time: "06:30"
+      primary: true
+      weight: 0.90
+      min_minutes: 40
+      max_minutes: 75
+
+  # A brick is intentionally two workouts on the same Garmin calendar date.
+  saturday:
+    - sport: bike
+      role: long
+      time: "08:00"
+      primary: true
+      weight: 1.55
+      min_minutes: 75
+      max_minutes: 210
+
+    - sport: run
+      role: brick
+      time: "11:00"
+      primary: false
+      after: bike
+      max_gap_minutes: 30
+      weight: 0.35
+      min_minutes: 15
+      max_minutes: 40
+
+  sunday:
+    - sport: run
+      role: long
+      time: "09:00"
+      primary: true
+      weight: 1.20
+      min_minutes: 55
+      max_minutes: 125
