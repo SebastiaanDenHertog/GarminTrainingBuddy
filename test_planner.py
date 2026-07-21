@@ -36,7 +36,7 @@ class PlannerTests(unittest.TestCase):
             )
 
     def test_rolling_range(self) -> None:
-        start = date(2026, 7, 21)
+        start = date(2025, 9, 29)
         sessions = build_sessions_for_range(
             DEFAULT_CONFIG, start, start + timedelta(days=20), start, 360
         )
