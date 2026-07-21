@@ -1,0 +1,423 @@
+# Garmin Adaptive Triathlon Advisor V3
+
+V3 keeps the workflow as close as possible to **Garmin + Garmin Connect**:
+
+1. Your Garmin records sleep, HRV, readiness and completed activities.
+2. You optionally add five short feedback values to the completed activity's
+   **private description** in Garmin Connect.
+3. The Docker service reads Garmin, evaluates recovery and training trends,
+   validates a weekly progression proposal, and maintains structured swim,
+   bike and run workouts on the Garmin calendar.
+
+No separate check-in website is required.
+
+> This is a conservative training-planning tool, not medical care. Pain,
+> illness, dizziness, chest symptoms or unusual breathlessness always override
+> the automated plan.
+
+## What is new in V3
+
+- Reads soreness, fatigue, motivation, pain/injury and session RPE from Garmin
+  activity descriptions.
+- Supports multiple sessions on the same day.
+- Distinguishes a primary session from a secondary session.
+- Keeps at most one hard session per day and a configurable weekly hard-session
+  limit.
+- Analyses 42 days of completed Garmin activities.
+- Estimates planner compliance by matching completed activities to planned
+  date, sport and duration.
+- Compares recent and previous sport-specific efficiency trends.
+- Produces a deterministic weekly progression recommendation.
+- Can ask a local OpenAI-compatible model for a second proposal.
+- Validates every proposal with hard Python rules and a local evidence catalog.
+- Runs in **shadow mode** by default: proposals are recorded but do not alter
+  the plan.
+- Rechecks applied proposals after at least two weeks and labels their observed
+  outcome positive, negative or inconclusive.
+
+## Garmin activity feedback
+
+After a workout, edit the completed activity in Garmin Connect and add this to
+its private description:
+
+```text
+#coach soreness=3 fatigue=4 motivation=8 pain=no rpe=6
+```
+
+The values mean:
+
+- `soreness`: muscle soreness from 0 to 10
+- `fatigue`: general fatigue from 0 to 10
+- `motivation`: motivation/readiness to train from 0 to 10
+- `pain`: `yes` or `no`; use `yes` for pain or a possible injury, not normal
+  training discomfort
+- `rpe`: how hard the completed session felt, from 1 to 10
+
+A multiline format also works:
+
+```text
+Soreness: 3
+Fatigue: 4
+Motivation: 8
+Pain/injury: no
+Session RPE: 6
+```
+
+Dutch aliases such as `spierpijn`, `vermoeidheid`, `motivatie`, `blessure` and
+`inspanning` are also accepted.
+
+Feedback is optional. The advisor continues to use Garmin recovery data when no
+feedback is present, but weekly AI progression remains more conservative. By
+default, only the parsed values are stored. Free-form private-description text is
+removed from the on-disk activity cache.
+
+Show the accepted format from the container:
+
+```bash
+docker compose run --rm triathlon-advisor python advisor.py feedback-help
+```
+
+## Multiple sessions per day
+
+Add multiple entries under a weekday in `config/plan.yaml`.
+
+### Separated double day
+
+```yaml
+tuesday:
+  - sport: swim
+    role: technique
+    time: "06:30"
+    primary: false
+    minimum_gap_hours: 6
+    weight: 0.70
+    min_minutes: 30
+    max_minutes: 60
+
+  - sport: run
+    role: quality
+    time: "17:30"
+    primary: true
+    weight: 0.95
+    min_minutes: 40
+    max_minutes: 80
+```
+
+### Bike-run brick
+
+```yaml
+saturday:
+  - sport: bike
+    role: long
+    time: "08:00"
+    primary: true
+    weight: 1.55
+    min_minutes: 75
+    max_minutes: 210
+
+  - sport: run
+    role: brick
+    time: "11:00"
+    primary: false
+    after: bike
+    max_gap_minutes: 30
+    weight: 0.35
+    min_minutes: 15
+    max_minutes: 40
+```
+
+Garmin workout scheduling is date-based. V3 adds the configured time and
+relationship to the workout description as guidance, but it does not create a
+clock-time calendar event.
+
+The safety limits are configured here:
+
+```yaml
+plan:
+  max_sessions_per_day: 2
+  max_hard_sessions_per_day: 1
+  max_hard_sessions_per_week: 2
+```
+
+You can set `max_sessions_per_day: 3`, but only one session may remain hard. A
+RED morning removes all managed sessions for that day. An AMBER morning removes
+secondary sessions first and downgrades the primary demanding session.
+
+## How weekly progression works
+
+The weekly review compares recent Garmin data with the previous period. It can
+return one of four decisions:
+
+- `hold`: keep the current stimulus
+- `progress`: make a small volume increase
+- `change_stimulus`: hold volume and change one quality variable
+- `reduce`: temporarily lower load
+
+The deterministic engine considers:
+
+- matched-session compliance
+- run, bike and swim efficiency trends where data is available
+- recent hard-session count
+- RED and AMBER recovery history
+- Garmin activity-description feedback
+- whether the current week is a recovery week
+
+Positive weekly volume changes are capped at 5%. The validator rejects a
+proposal that simultaneously increases volume and interval intensity, adds load
+in a recovery week, exceeds hard-session limits, follows poor compliance, or
+follows pain/high-fatigue feedback.
+
+## Why the AI cannot write directly
+
+The local model only receives summarized metrics and returns a small JSON
+proposal. It never receives Garmin credentials and never calls Garmin.
+
+The pipeline is:
+
+```text
+Garmin data
+  -> deterministic metrics
+  -> deterministic reference proposal
+  -> optional local-AI proposal
+  -> schema, evidence and safety validation
+  -> shadow log or approved adjustment
+  -> normal planner
+  -> Garmin calendar
+```
+
+The local evidence catalog is `config/evidence.yaml`. Every proposal must use
+known evidence IDs whose allowed decision matches the proposal.
+
+## 1. Install or upgrade from V2
+
+Extract V3 beside the old project. Copy your existing Garmin tokens so you do
+not need to log in again:
+
+```bash
+cp -a ../garmin-adaptive-triathlon-advisor/tokens ./tokens
+```
+
+You may also copy `data/` to preserve planner history. V3 can read V2 planner
+state; new session fields have safe defaults.
+
+Then configure:
+
+```bash
+cp .env.example .env
+mkdir -p tokens data config
+chmod 600 .env
+```
+
+On Linux, put the results of these commands into `HOST_UID` and `HOST_GID`:
+
+```bash
+id -u
+id -g
+```
+
+## 2. Login and preview
+
+```bash
+docker compose build
+docker compose run --rm -it triathlon-advisor python advisor.py login
+```
+
+Keep these safe defaults initially:
+
+```env
+GARMIN_WRITE_ENABLED=false
+DRY_RUN=true
+AI_SHADOW_MODE=true
+COACH_AUTO_APPLY=false
+AI_ENABLED=false
+```
+
+Preview the rolling Garmin plan:
+
+```bash
+docker compose run --rm triathlon-advisor python advisor.py plan
+```
+
+Run the daily recovery check immediately:
+
+```bash
+docker compose run --rm triathlon-advisor python advisor.py run
+```
+
+## 3. Analyse Garmin history
+
+```bash
+docker compose run --rm triathlon-advisor python advisor.py analyze
+```
+
+The result is also written under:
+
+```text
+data/analytics/YYYY-MM-DD.json
+```
+
+Detailed activity summaries are cached under `data/cache/activities/` to reduce
+repeated Garmin requests. Description, note and comment fields are redacted before
+the cache is written; only the parsed coach values are retained. Activities from
+the most recent few days are refreshed so newly edited descriptions can be
+discovered.
+
+## 4. Run a weekly coach review
+
+The deterministic review works without an AI model:
+
+```bash
+docker compose run --rm triathlon-advisor python advisor.py coach
+```
+
+Proposals are stored under:
+
+```text
+data/coach/proposals/
+```
+
+In shadow mode, `applied` stays false and the Garmin plan remains unchanged.
+Review several weeks of proposals before allowing application.
+
+## 5. Connect a local model
+
+V3 uses an OpenAI-compatible `/v1/chat/completions` endpoint. Ollama, vLLM or
+another local server can provide that interface.
+
+For Ollama on the Docker host:
+
+```env
+AI_ENABLED=true
+AI_BASE_URL=http://host.docker.internal:11434/v1
+AI_MODEL=qwen3:30b-a3b
+AI_API_KEY=ollama
+AI_SHADOW_MODE=true
+COACH_AUTO_APPLY=false
+```
+
+For an Ollama service named `ollama` on the same Compose network:
+
+```env
+AI_BASE_URL=http://ollama:11434/v1
+```
+
+Run another review and inspect both the proposal and validator result:
+
+```bash
+docker compose run --rm triathlon-advisor python advisor.py coach
+```
+
+If the AI endpoint fails or returns invalid data, V3 records the error and uses
+the deterministic proposal as a reference. An invalid AI proposal is never
+applied.
+
+## 6. Allow validated coach changes
+
+Only after reviewing shadow results:
+
+```env
+AI_SHADOW_MODE=false
+COACH_AUTO_APPLY=true
+```
+
+This allows a validated weekly proposal to write:
+
+```text
+data/coach/active_adjustment.json
+```
+
+That file can adjust:
+
+- total weekly volume multiplier
+- relative run/bike/swim weighting
+- quality-session repetition progression
+
+It does **not** write to Garmin by itself. The normal planner still requires:
+
+```env
+GARMIN_WRITE_ENABLED=true
+DRY_RUN=false
+```
+
+Keep the AI switches and Garmin-write switches separate while testing.
+
+After an applied adjustment changes future generated workouts, preview first.
+Use `rebuild` only when you intentionally want future V3-managed Garmin calendar
+entries recreated:
+
+```bash
+docker compose run --rm triathlon-advisor python advisor.py rebuild
+```
+
+## 7. Start the service
+
+```bash
+docker compose up -d
+docker compose logs -f
+```
+
+The daily job:
+
+1. runs the weekly coach review on `AI_REVIEW_DAY` if not already done;
+2. reads Garmin recovery and recent private-description feedback;
+3. extends the rolling calendar;
+4. adapts today's managed workouts after AMBER or RED signals;
+5. writes the daily report to `data/reports/`.
+
+## Outcome checking
+
+An applied proposal is not automatically considered correct. After at least two
+weeks, V3 compares the new analysis with the saved baseline. It marks the
+proposal outcome:
+
+- `positive`: efficiency improved without a meaningful compliance/recovery cost
+- `negative`: pain, reduced compliance, worse recovery or a material efficiency
+  decline appeared
+- `inconclusive`: the available data does not show a clear result
+
+This is an audit signal, not proof of causation. Weather, terrain, equipment,
+illness and life stress can affect the measurements.
+
+## Commands
+
+```text
+python advisor.py login          Interactive Garmin login
+python advisor.py run            Daily recovery + planning run
+python advisor.py plan           Preview or extend the rolling plan
+python advisor.py rebuild        Recreate future V3-managed workouts
+python advisor.py status         Show planner and active-coach state
+python advisor.py analyze        Build the 42-day training analysis
+python advisor.py coach          Force a weekly coach proposal
+python advisor.py feedback-help  Print the Garmin description format
+python advisor.py daemon         Run the scheduled service
+```
+
+## Tests
+
+The feedback parser and coach validator can be tested without Garmin:
+
+```bash
+python -m unittest -v test_feedback.py test_coach.py
+```
+
+The complete Docker image also includes the planner tests:
+
+```bash
+docker compose run --rm triathlon-advisor \
+  python -m unittest -v test_planner.py test_feedback.py test_coach.py
+```
+
+## Limitations
+
+- `python-garminconnect` uses unofficial Garmin Connect endpoints that Garmin can
+  change.
+- Garmin activity descriptions may have different response field names over
+  time. V3 checks several known fields and a conservative recursive fallback.
+- Efficiency comparisons need reasonably similar activities and reliable heart
+  rate or power data. The validator holds when the data is insufficient.
+- Pool workouts are distance-based and require the correct `pool_length_m`.
+- V3 does not assess swim technique, diagnose injury or know your full life
+  stress.
+- Do not run another service that continuously rewrites the same Garmin calendar
+  dates.
+# GarminTrainingBuddy
