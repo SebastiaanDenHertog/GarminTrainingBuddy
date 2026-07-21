@@ -17,7 +17,7 @@ from coach import (
 def analysis(**overrides):
     base = TrainingAnalysis(
         generated_at="2026-07-21T12:00:00+12:00",
-        period_start="2026-06-10",
+        period_start="2025-09-29",
         period_end="2026-07-21",
         activity_count=20,
         total_minutes=1600,
