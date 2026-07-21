@@ -314,16 +314,11 @@ def _extract_json(text: str) -> dict[str, Any]:
     raise ValueError("AI response did not contain a JSON object.")
 
 
-def request_ai_proposal(
-    analysis: TrainingAnalysis,
-    deterministic: CoachProposal,
-    evidence: dict[str, dict[str, Any]],
-) -> CoachProposal:
-    base_url = os.getenv("AI_BASE_URL", "http://ollama:11434/v1").rstrip("/")
-    model = os.getenv("AI_MODEL", "qwen3:30b-a3b")
-    api_key = os.getenv("AI_API_KEY", "ollama")
-    timeout = int(os.getenv("AI_TIMEOUT_SECONDS", "120"))
-
+def _ai_prompt(
+        analysis: TrainingAnalysis,
+        deterministic: CoachProposal,
+        evidence: dict[str, dict[str, Any]],
+) -> tuple[str, str]:
     evidence_catalog = [
         {
             "id": key,
@@ -360,12 +355,71 @@ def request_ai_proposal(
         "evidence_catalog": evidence_catalog,
         "output_schema": schema,
     }
+    return system, json.dumps(user, separators=(",", ":"))
+
+
+def _proposal_from_ai_content(content: str) -> CoachProposal:
+    raw = _extract_json(content)
+    return _new_proposal(
+        "local_ai",
+        str(raw.get("decision", "hold")),
+        _number(raw.get("confidence"), 0.0),
+        _number(raw.get("weekly_volume_change_percent"), 0.0),
+        raw.get("sport_volume_change_percent")
+        if isinstance(raw.get("sport_volume_change_percent"), dict)
+        else {},
+        raw.get("quality_changes")
+        if isinstance(raw.get("quality_changes"), list)
+        else [],
+        [
+            str(item)
+            for item in raw.get("reasoning_summary", [])
+            if isinstance(item, str)
+        ],
+        [
+            str(item)
+            for item in raw.get("evidence_ids", [])
+            if isinstance(item, str)
+        ],
+        int(_number(raw.get("valid_for_weeks"), 1)),
+    )
+
+
+def request_embedded_ai_proposal(
+        analysis: TrainingAnalysis,
+        deterministic: CoachProposal,
+        evidence: dict[str, dict[str, Any]],
+) -> CoachProposal:
+    from local_ai import generate_chat_completion
+
+    system, user = _ai_prompt(analysis, deterministic, evidence)
+    content = generate_chat_completion(
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        max_new_tokens=int(os.getenv("LOCAL_AI_MAX_NEW_TOKENS", "1400")),
+        temperature=float(os.getenv("LOCAL_AI_TEMPERATURE", "0")),
+    )
+    return _proposal_from_ai_content(content)
+
+
+def request_external_ai_proposal(
+        analysis: TrainingAnalysis,
+        deterministic: CoachProposal,
+        evidence: dict[str, dict[str, Any]],
+) -> CoachProposal:
+    base_url = os.getenv("AI_BASE_URL", "http://ollama:11434/v1").rstrip("/")
+    model = os.getenv("AI_MODEL", "qwen3:30b-a3b")
+    api_key = os.getenv("AI_API_KEY", "ollama")
+    timeout = int(os.getenv("AI_TIMEOUT_SECONDS", "120"))
+    system, user = _ai_prompt(analysis, deterministic, evidence)
     payload = {
         "model": model,
         "temperature": 0.1,
         "messages": [
             {"role": "system", "content": system},
-            {"role": "user", "content": json.dumps(user, separators=(",", ":"))},
+            {"role": "user", "content": user},
         ],
     }
     request = urllib.request.Request(
@@ -381,24 +435,27 @@ def request_ai_proposal(
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"Local AI request failed: {exc}") from exc
+        raise RuntimeError(f"External local-AI request failed: {exc}") from exc
 
     content = (((body.get("choices") or [{}])[0].get("message") or {}).get("content"))
     if not isinstance(content, str):
-        raise RuntimeError("Local AI response did not contain message content.")
-    raw = _extract_json(content)
-    return _new_proposal(
-        "local_ai",
-        str(raw.get("decision", "hold")),
-        _number(raw.get("confidence"), 0.0),
-        _number(raw.get("weekly_volume_change_percent"), 0.0),
-        raw.get("sport_volume_change_percent") if isinstance(raw.get("sport_volume_change_percent"), dict) else {},
-        raw.get("quality_changes") if isinstance(raw.get("quality_changes"), list) else [],
-        [str(item) for item in raw.get("reasoning_summary", []) if isinstance(item, str)],
-        [str(item) for item in raw.get("evidence_ids", []) if isinstance(item, str)],
-        int(_number(raw.get("valid_for_weeks"), 1)),
-    )
+        raise RuntimeError("External local-AI response did not contain message content.")
+    return _proposal_from_ai_content(content)
 
+
+def request_ai_proposal(
+        analysis: TrainingAnalysis,
+        deterministic: CoachProposal,
+        evidence: dict[str, dict[str, Any]],
+) -> CoachProposal:
+    backend = os.getenv("AI_BACKEND", "embedded").strip().lower()
+    if backend == "embedded":
+        return request_embedded_ai_proposal(analysis, deterministic, evidence)
+    if backend in {"external", "openai", "ollama"}:
+        return request_external_ai_proposal(analysis, deterministic, evidence)
+    raise RuntimeError(
+        f"Unsupported AI_BACKEND={backend!r}; use 'embedded' or 'external'."
+    )
 
 def validate_proposal(
     proposal: CoachProposal,
@@ -698,7 +755,17 @@ def run_weekly_review(
     chosen = deterministic
     ai_error: str | None = None
 
-    if env_bool("AI_ENABLED", False):
+    ai_enabled = env_bool("AI_ENABLED", False)
+    ai_backend = os.getenv("AI_BACKEND", "embedded").strip().lower()
+    ai_runtime: dict[str, Any] | None = None
+    if ai_enabled and ai_backend == "embedded":
+        from local_ai import ram_check_payload
+
+        ai_runtime = ram_check_payload()
+    elif ai_enabled:
+        ai_runtime = {"backend": ai_backend, "ram_preflight": "not_applicable"}
+
+    if ai_enabled:
         try:
             chosen = request_ai_proposal(analysis, deterministic, evidence)
         except Exception as exc:
@@ -736,6 +803,9 @@ def run_weekly_review(
         "proposal": asdict(chosen),
         "validation": asdict(validation),
         "fallback": fallback,
+        "ai_enabled": ai_enabled,
+        "ai_backend": ai_backend,
+        "ai_runtime": ai_runtime,
         "ai_error": ai_error,
         "shadow_mode": shadow,
         "auto_apply_enabled": auto_apply,
@@ -753,6 +823,9 @@ def run_weekly_review(
         "proposal": asdict(chosen),
         "validation": asdict(validation),
         "fallback": fallback,
+        "ai_enabled": ai_enabled,
+        "ai_backend": ai_backend,
+        "ai_runtime": ai_runtime,
         "ai_error": ai_error,
         "active_adjustment_file": str(adjustment_path) if adjustment_path else None,
         "evaluated_outcomes": evaluated_outcomes,

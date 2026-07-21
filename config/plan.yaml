@@ -24,7 +24,7 @@ plan:
   # Double-session and intensity safety limits.
   max_sessions_per_day: 2
   max_hard_sessions_per_day: 1
-  max_hard_sessions_per_week: 2
+  max_hard_sessions_per_week: 3
 
   # The weekly coach can only adjust these generated values after validation.
   # They are normally injected from data/coach/active_adjustment.json.
@@ -52,23 +52,21 @@ plan:
   swim_meters_per_hour: 2200
 
 training_days:
-  monday: []
+  monday:
+    - sport: bike
+      role: endurance
+      time: "12:00"
+      primary: true
+      weight: 0.85
+      min_minutes: 60
+      max_minutes: 120
 
   # A separated double day: easy technique swim in the morning and the week's
   # primary run-quality session later. Change or remove either entry freely.
   tuesday:
-    - sport: swim
-      role: technique
-      time: "06:30"
-      primary: false
-      minimum_gap_hours: 6
-      weight: 0.70
-      min_minutes: 30
-      max_minutes: 60
-
     - sport: run
       role: quality
-      time: "17:30"
+      time: "14:30"
       primary: true
       weight: 0.95
       min_minutes: 40
@@ -77,16 +75,25 @@ training_days:
   wednesday:
     - sport: bike
       role: easy
-      time: "17:30"
-      primary: true
+      time: "10:30"
+      primary: false
       weight: 0.85
       min_minutes: 40
       max_minutes: 75
 
+    - sport: swim
+      role: technique
+      time: "16:30"
+      primary: true
+      minimum_gap_hours: 6
+      weight: 0.70
+      min_minutes: 30
+      max_minutes: 60
+
   thursday:
     - sport: run
       role: easy
-      time: "17:30"
+      time: "14:30"
       primary: true
       weight: 0.80
       min_minutes: 35
@@ -95,7 +102,7 @@ training_days:
   friday:
     - sport: swim
       role: endurance
-      time: "06:30"
+      time: "14:30"
       primary: true
       weight: 0.90
       min_minutes: 40
@@ -122,10 +129,11 @@ training_days:
       max_minutes: 40
 
   sunday:
-    - sport: run
-      role: long
-      time: "09:00"
+    - sport: swim
+      role: easy
+      time: "14:30"
       primary: true
-      weight: 1.20
-      min_minutes: 55
-      max_minutes: 125
+      minimum_gap_hours: 6
+      weight: 0.70
+      min_minutes: 30
+      max_minutes: 60

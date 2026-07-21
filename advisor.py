@@ -571,6 +571,14 @@ def run_coach_review(force: bool = True) -> int:
     return 0
 
 
+def run_ai_check() -> int:
+    from local_ai import ram_check_payload
+
+    payload = ram_check_payload()
+    print(json.dumps(payload, indent=2, default=str))
+    return 0 if payload.get("enough_ram") else 2
+
+
 def run_daemon() -> int:
     tz_name = os.getenv("TZ", "Pacific/Auckland")
     hour = int(os.getenv("RUN_HOUR", "6"))
@@ -604,6 +612,7 @@ def main() -> int:
             "analyze",
             "coach",
             "feedback-help",
+            "ai-check",
             "daemon",
         ),
     )
@@ -627,6 +636,8 @@ def main() -> int:
     if args.command == "feedback-help":
         print(feedback_format_help())
         return 0
+    if args.command == "ai-check":
+        return run_ai_check()
     return run_daemon()
 
 

@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import json
 import unittest
+from unittest.mock import patch
 from dataclasses import replace
 
 from analytics import TrainingAnalysis
-from coach import deterministic_proposal, load_evidence, validate_proposal
+from coach import (
+    deterministic_proposal,
+    load_evidence,
+    request_embedded_ai_proposal,
+    validate_proposal,
+)
 
 
 def analysis(**overrides):
@@ -68,6 +75,32 @@ class CoachTests(unittest.TestCase):
         proposal = deterministic_proposal(analysis(), CONFIG)
         result = validate_proposal(proposal, current, CONFIG, self.evidence)
         self.assertFalse(result.accepted)
+
+    @patch("local_ai.generate_chat_completion")
+    def test_embedded_ai_returns_structured_proposal(self, generate) -> None:
+        generate.return_value = json.dumps(
+            {
+                "decision": "hold",
+                "confidence": 0.9,
+                "weekly_volume_change_percent": 0,
+                "sport_volume_change_percent": {"run": 0, "bike": 0, "swim": 0},
+                "quality_changes": [],
+                "reasoning_summary": ["Current training is working."],
+                "evidence_ids": ["HOLD_WHEN_UNCERTAIN_001"],
+                "valid_for_weeks": 1,
+            }
+        )
+        current = analysis()
+        deterministic = deterministic_proposal(current, CONFIG)
+        proposal = request_embedded_ai_proposal(
+            current, deterministic, self.evidence
+        )
+        self.assertEqual(proposal.source, "local_ai")
+        self.assertEqual(proposal.decision, "hold")
+        self.assertTrue(
+            validate_proposal(proposal, current, CONFIG, self.evidence).accepted
+        )
+
 
 
 if __name__ == "__main__":

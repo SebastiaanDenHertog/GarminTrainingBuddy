@@ -28,7 +28,9 @@ No separate check-in website is required.
   date, sport and duration.
 - Compares recent and previous sport-specific efficiency trends.
 - Produces a deterministic weekly progression recommendation.
-- Can ask a local OpenAI-compatible model for a second proposal.
+- Can load `Qwen/Qwen3-30B-A3B` directly inside the V3 Docker service.
+- Checks host and Docker/cgroup memory before loading the embedded model.
+- Can still use an external OpenAI-compatible Ollama or vLLM endpoint.
 - Validates every proposal with hard Python rules and a local evidence catalog.
 - Runs in **shadow mode** by default: proposals are recorded but do not alter
   the plan.
@@ -169,8 +171,10 @@ follows pain/high-fatigue feedback.
 
 ## Why the AI cannot write directly
 
-The local model only receives summarized metrics and returns a small JSON
-proposal. It never receives Garmin credentials and never calls Garmin.
+The model only receives summarized metrics and returns a small JSON proposal.
+It never receives Garmin credentials and never calls Garmin. When the embedded
+backend is enabled, the model is loaded lazily in the same V3 Python process;
+with AI disabled, PyTorch and Transformers are not initialized.
 
 The pipeline is:
 
@@ -204,7 +208,7 @@ Then configure:
 
 ```bash
 cp .env.example .env
-mkdir -p tokens data config
+mkdir -p tokens data config models
 chmod 600 .env
 ```
 
@@ -279,37 +283,83 @@ data/coach/proposals/
 In shadow mode, `applied` stays false and the Garmin plan remains unchanged.
 Review several weeks of proposals before allowing application.
 
-## 5. Connect a local model
+## 5. Enable the model built into V3
 
-V3 uses an OpenAI-compatible `/v1/chat/completions` endpoint. Ollama, vLLM or
-another local server can provide that interface.
+The normal Docker image contains the Python, Transformers and PyTorch code needed
+to load `Qwen/Qwen3-30B-A3B` directly. The model weights are downloaded on the
+first embedded-AI run and cached in `./models/`; they are not stored inside the
+project ZIP.
 
-For Ollama on the Docker host:
+Keep AI off while installing and checking the rest of the Garmin workflow:
+
+```env
+AI_ENABLED=false
+```
+
+Check the RAM visible to both Linux and the Docker cgroup before enabling it:
+
+```bash
+docker compose run --rm triathlon-advisor python advisor.py ai-check
+```
+
+The check reports:
+
+- host total and currently available RAM;
+- the Docker cgroup memory limit and remaining memory, when one is set;
+- the effective available amount, using the smaller usable value;
+- an estimated model requirement based on the model name and dtype;
+- the configured safety reserve;
+- whether model loading is allowed.
+
+The safe embedded configuration is:
 
 ```env
 AI_ENABLED=true
-AI_BASE_URL=http://host.docker.internal:11434/v1
-AI_MODEL=qwen3:30b-a3b
-AI_API_KEY=ollama
+AI_BACKEND=embedded
+AI_MODEL=Qwen/Qwen3-30B-A3B
+LOCAL_AI_RAM_CHECK_MODE=strict
+LOCAL_AI_REQUIRED_RAM_GB=0
+LOCAL_AI_RAM_RESERVE_GB=8
+LOCAL_AI_DTYPE=auto
+LOCAL_AI_DEVICE_MAP=auto
+LOCAL_AI_ENABLE_THINKING=false
 AI_SHADOW_MODE=true
 COACH_AUTO_APPLY=false
 ```
 
-For an Ollama service named `ollama` on the same Compose network:
+`LOCAL_AI_REQUIRED_RAM_GB=0` means V3 calculates a conservative requirement from
+the parameter count in the model name. A positive value overrides that estimate.
+In `strict` mode, insufficient or unmeasurable RAM prevents model loading and the
+weekly review falls back to the deterministic proposal. `warn` mode records the
+shortage but still tries to load; `off` disables enforcement. Keep `strict` unless
+you have measured the real peak usage yourself.
 
-```env
-AI_BASE_URL=http://ollama:11434/v1
-```
-
-Run another review and inspect both the proposal and validator result:
+Run the weekly review:
 
 ```bash
 docker compose run --rm triathlon-advisor python advisor.py coach
 ```
 
-If the AI endpoint fails or returns invalid data, V3 records the error and uses
-the deterministic proposal as a reference. An invalid AI proposal is never
-applied.
+The first run can take a long time because it downloads and loads the model. In
+the long-running `docker compose up -d` service, the model remains cached in the
+Python process after its first use. A new `docker compose run --rm ... coach`
+command starts a fresh container and therefore reloads it.
+
+### Optional external backend
+
+The previous Ollama/vLLM route remains available:
+
+```env
+AI_ENABLED=true
+AI_BACKEND=external
+AI_BASE_URL=http://host.docker.internal:11434/v1
+AI_MODEL=qwen3:30b-a3b
+AI_API_KEY=ollama
+```
+
+If model loading, an external endpoint, or JSON parsing fails, V3 records the
+error and uses the deterministic proposal as the safe reference. An invalid AI
+proposal is never applied.
 
 ## 6. Allow validated coach changes
 
@@ -389,6 +439,7 @@ python advisor.py status         Show planner and active-coach state
 python advisor.py analyze        Build the 42-day training analysis
 python advisor.py coach          Force a weekly coach proposal
 python advisor.py feedback-help  Print the Garmin description format
+python advisor.py ai-check       Check RAM before loading embedded AI
 python advisor.py daemon         Run the scheduled service
 ```
 
@@ -397,14 +448,14 @@ python advisor.py daemon         Run the scheduled service
 The feedback parser and coach validator can be tested without Garmin:
 
 ```bash
-python -m unittest -v test_feedback.py test_coach.py
+python -m unittest -v test_feedback.py test_coach.py test_local_ai.py
 ```
 
 The complete Docker image also includes the planner tests:
 
 ```bash
 docker compose run --rm triathlon-advisor \
-  python -m unittest -v test_planner.py test_feedback.py test_coach.py
+  python -m unittest -v test_planner.py test_feedback.py test_coach.py test_local_ai.py
 ```
 
 ## Limitations
@@ -418,6 +469,11 @@ docker compose run --rm triathlon-advisor \
 - Pool workouts are distance-based and require the correct `pool_length_m`.
 - V3 does not assess swim technique, diagnose injury or know your full life
   stress.
+- The embedded model requires a large download and substantial RAM. The preflight
+  estimate is intentionally conservative but cannot guarantee that loading will
+  succeed on every combination of hardware, dtype and Transformers version.
+- The included Docker build installs CPU PyTorch by default. Accelerator use
+  requires a compatible Docker host and a matching `TORCH_INDEX_URL` build
+  argument.
 - Do not run another service that continuously rewrites the same Garmin calendar
   dates.
-# GarminTrainingBuddy

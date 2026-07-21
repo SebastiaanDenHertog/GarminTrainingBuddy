@@ -1,6 +1,11 @@
 services:
   triathlon-advisor:
-    build: .
+    build:
+      context: .
+      args:
+        # CPU PyTorch is the safe default. Override this only when your Docker
+        # host is configured for a compatible GPU build.
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
     container_name: garmin-adaptive-triathlon-advisor-v3
     restart: unless-stopped
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
@@ -11,12 +16,14 @@ services:
       DATA_DIR: /data
       PLAN_CONFIG: /config/plan.yaml
       EVIDENCE_CONFIG: /config/evidence.yaml
+      HF_HOME: /models/huggingface
+      LOCAL_AI_OFFLOAD_DIR: /models/offload
       HOME: /tmp
     volumes:
       - ./tokens:/tokens
       - ./data:/data
       - ./config:/config:ro
-    # When Ollama runs as another Compose service, add both services to the same
-    # network and use AI_BASE_URL=http://ollama:11434/v1.
+      - ./models:/models
+    # AI_BACKEND=external can still reach an Ollama/vLLM server on the host.
     extra_hosts:
       - "host.docker.internal:host-gateway"
