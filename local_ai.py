@@ -169,19 +169,19 @@ def check_available_ram() -> RamCheck:
     required_with_reserve = round(required + reserve, 1)
 
     enough = (
-        effective_available is not None
-        and effective_available / _GIB >= required_with_reserve
+            effective_available is not None
+            and effective_available / _GIB >= required_with_reserve
     )
     load_allowed = enough or mode in {"warn", "off"}
 
     if mode == "off":
         message = (
-            "RAM preflight enforcement is disabled. "
-            + (
-                "The measured RAM is above the recommendation."
-                if enough
-                else "The measured RAM is below or unavailable for the recommendation."
-            )
+                "RAM preflight enforcement is disabled. "
+                + (
+                    "The measured RAM is above the recommendation."
+                    if enough
+                    else "The measured RAM is below or unavailable for the recommendation."
+                )
         )
     elif effective_available is None:
         message = (
@@ -311,10 +311,10 @@ def _load_embedded_model() -> tuple[Any, Any, Any]:
 
 
 def generate_chat_completion(
-    messages: list[dict[str, str]],
-    *,
-    max_new_tokens: int | None = None,
-    temperature: float | None = None,
+        messages: list[dict[str, str]],
+        *,
+        max_new_tokens: int | None = None,
+        temperature: float | None = None,
 ) -> str:
     model, tokenizer, input_device = _load_embedded_model()
 

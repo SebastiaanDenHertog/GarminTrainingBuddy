@@ -24,6 +24,8 @@ No separate check-in website is required.
 - Keeps at most one hard session per day and a configurable weekly hard-session
   limit.
 - Analyses 42 days of completed Garmin activities.
+- Can use an optional structured-training start date as conservative background
+  context for weekly progression.
 - Estimates planner compliance by matching completed activities to planned
   date, sport and duration.
 - Compares recent and previous sport-specific efficiency trends.
@@ -145,6 +147,30 @@ You can set `max_sessions_per_day: 3`, but only one session may remain hard. A
 RED morning removes all managed sessions for that day. An AMBER morning removes
 secondary sessions first and downgrades the primary demanding session.
 
+## Structured training start date
+
+Set the date you began **consistent structured endurance or triathlon training**
+in `.env`:
+
+```env
+STRUCTURED_TRAINING_START_DATE=2025-06-01
+```
+
+Use `YYYY-MM-DD`. Leave it empty when you do not want training age used. The
+value is included in analytics and in the facts sent to the local model. It is
+background context only: it never overrides current Garmin performance,
+recovery, compliance, pain/injury feedback or recent training history.
+
+During the first eight structured-training weeks, V3 caps positive progression
+at 2% and blocks added interval intensity. From week eight onward, the normal
+performance-and-recovery rules apply. A long training age does not automatically
+make the plan harder; measured adaptation still has to support the change.
+
+The analysis labels the context as `foundation` (under 8 weeks), `developing`
+(8-23 weeks), `established` (24-51 weeks) or `experienced` (52+ weeks). An invalid
+or future date is ignored, logged, and included as a validation warning so the
+daily recovery workflow keeps running.
+
 ## How weekly progression works
 
 The weekly review compares recent Garmin data with the previous period. It can
@@ -234,6 +260,7 @@ DRY_RUN=true
 AI_SHADOW_MODE=true
 COACH_AUTO_APPLY=false
 AI_ENABLED=false
+STRUCTURED_TRAINING_START_DATE=
 ```
 
 Preview the rolling Garmin plan:
@@ -448,14 +475,14 @@ python advisor.py daemon         Run the scheduled service
 The feedback parser and coach validator can be tested without Garmin:
 
 ```bash
-python -m unittest -v test_feedback.py test_coach.py test_local_ai.py
+python -m unittest -v test_analytics.py test_feedback.py test_coach.py test_local_ai.py
 ```
 
 The complete Docker image also includes the planner tests:
 
 ```bash
 docker compose run --rm triathlon-advisor \
-  python -m unittest -v test_planner.py test_feedback.py test_coach.py test_local_ai.py
+  python -m unittest -v test_planner.py test_analytics.py test_feedback.py test_coach.py test_local_ai.py
 ```
 
 ## Limitations

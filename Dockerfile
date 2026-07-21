@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir --index-url "${TORCH_INDEX_URL}" "torch>=2.6,<3" 
     && pip install --no-cache-dir -r requirements-ai.txt
 
 COPY advisor.py planner.py feedback.py analytics.py coach.py local_ai.py ./
-COPY test_planner.py test_feedback.py test_coach.py test_local_ai.py ./
+COPY test_planner.py test_feedback.py test_coach.py test_local_ai.py test_analytics.py ./
 
 RUN useradd --create-home --uid 10001 advisor \
     && mkdir -p /data /tokens /config /models/huggingface /models/offload \

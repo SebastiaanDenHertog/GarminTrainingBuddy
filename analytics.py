@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -89,9 +90,56 @@ class TrainingAnalysis:
     recovery_week: bool
     weekly_summaries: list[dict[str, Any]]
     samples: list[dict[str, Any]]
+    structured_training_start_date: str | None = None
+    training_age_weeks: int | None = None
+    training_experience_band: str = "unknown"
+    training_age_warning: str | None = None
 
 
 SPORT_KEYS = {"run": "run", "running": "run", "bike": "bike", "cycling": "bike", "swim": "swim", "swimming": "swim"}
+
+
+def _structured_training_context(
+        today: date,
+) -> tuple[str | None, int | None, str, str | None]:
+    """Read optional structured-training age from the environment.
+
+    Training age is context only. It never overrides current Garmin history,
+    recovery, compliance, or pain feedback. Invalid values are ignored so a
+    non-critical configuration typo cannot stop the daily recovery workflow.
+    """
+    raw = os.getenv("STRUCTURED_TRAINING_START_DATE", "").strip()
+    if not raw:
+        return None, None, "unknown", None
+
+    try:
+        started = date.fromisoformat(raw)
+    except ValueError:
+        warning = (
+            "STRUCTURED_TRAINING_START_DATE must use YYYY-MM-DD; "
+            f"ignoring {raw!r}."
+        )
+        LOG.warning(warning)
+        return None, None, "unknown", warning
+
+    if started > today:
+        warning = (
+            "STRUCTURED_TRAINING_START_DATE is in the future; "
+            f"ignoring {started.isoformat()}."
+        )
+        LOG.warning(warning)
+        return None, None, "unknown", warning
+
+    weeks = max(0, (today - started).days // 7)
+    if weeks < 8:
+        band = "foundation"
+    elif weeks < 24:
+        band = "developing"
+    elif weeks < 52:
+        band = "established"
+    else:
+        band = "experienced"
+    return started.isoformat(), weeks, band, None
 
 
 def _number(value: Any) -> float | None:
@@ -495,6 +543,12 @@ def build_training_analysis(
         for sport in ("run", "bike", "swim")
     }
     summaries = weekly_summaries(samples)
+    (
+        structured_training_start_date,
+        training_age_weeks,
+        training_experience_band,
+        training_age_warning,
+    ) = _structured_training_context(today)
 
     return TrainingAnalysis(
         generated_at=datetime.now().astimezone().isoformat(),
@@ -537,6 +591,10 @@ def build_training_analysis(
         recovery_week=week_index % 4 == 3,
         weekly_summaries=[asdict(item) for item in summaries],
         samples=[asdict(item) for item in samples],
+        structured_training_start_date=structured_training_start_date,
+        training_age_weeks=training_age_weeks,
+        training_experience_band=training_experience_band,
+        training_age_warning=training_age_warning,
     )
 
 

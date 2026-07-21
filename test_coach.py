@@ -63,6 +63,32 @@ class CoachTests(unittest.TestCase):
         result = validate_proposal(proposal, analysis(), CONFIG, self.evidence)
         self.assertTrue(result.accepted, result.errors)
 
+    def test_early_training_age_caps_progression(self) -> None:
+        current = analysis(
+            structured_training_start_date="2026-07-01",
+            training_age_weeks=3,
+            training_experience_band="foundation",
+        )
+        proposal = deterministic_proposal(current, CONFIG)
+        self.assertEqual(proposal.decision, "progress")
+        self.assertEqual(proposal.weekly_volume_change_percent, 2)
+        self.assertIn("TRAINING_AGE_001", proposal.evidence_ids)
+        result = validate_proposal(proposal, current, CONFIG, self.evidence)
+        self.assertTrue(result.accepted, result.errors)
+
+    def test_early_training_age_holds_plateau_instead_of_adding_intensity(self) -> None:
+        current = analysis(
+            efficiency_change_percent={"run": 0.5, "bike": 0.2, "swim": -0.1},
+            structured_training_start_date="2026-07-01",
+            training_age_weeks=3,
+            training_experience_band="foundation",
+        )
+        proposal = deterministic_proposal(current, CONFIG)
+        self.assertEqual(proposal.decision, "hold")
+        self.assertEqual(proposal.quality_changes, [])
+        result = validate_proposal(proposal, current, CONFIG, self.evidence)
+        self.assertTrue(result.accepted, result.errors)
+
     def test_pain_forces_reduction(self) -> None:
         current = analysis(pain_reported=True)
         proposal = deterministic_proposal(current, CONFIG)

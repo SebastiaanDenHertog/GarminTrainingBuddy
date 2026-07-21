@@ -101,6 +101,10 @@ def compact_analysis(analysis: TrainingAnalysis) -> dict[str, Any]:
         "average_hrv_ratio": analysis.average_hrv_ratio,
         "current_week_index": analysis.current_week_index,
         "recovery_week": analysis.recovery_week,
+        "structured_training_start_date": analysis.structured_training_start_date,
+        "training_age_weeks": analysis.training_age_weeks,
+        "training_experience_band": analysis.training_experience_band,
+        "training_age_warning": analysis.training_age_warning,
     }
 
 
@@ -215,9 +219,13 @@ def deterministic_proposal(
         )
 
     stable_recovery = (
-        analysis.recovery_red_days == 0
-        and not analysis.high_soreness_reported
-        and not analysis.high_fatigue_reported
+            analysis.recovery_red_days == 0
+            and not analysis.high_soreness_reported
+            and not analysis.high_fatigue_reported
+    )
+    early_foundation = (
+            analysis.training_age_weeks is not None
+            and analysis.training_age_weeks < 8
     )
     high_compliance = analysis.compliance >= 0.85
     improving = any(value >= 1.5 for value in known_changes)
@@ -233,22 +241,51 @@ def deterministic_proposal(
             key=lambda item: item[1],
             default=("bike", 0.0),
         )[0]
+        progress_percent = 2 if early_foundation else 3
+        reasons = [
+            "Training compliance is high and recent recovery is stable.",
+            "At least one sport-specific efficiency trend is improving.",
+            "Only a small volume increase is proposed.",
+        ]
+        evidence_ids = [
+            "PROGRESS_SMALL_001",
+            "ONE_VARIABLE_001",
+            "COMPLIANCE_001",
+        ]
+        if early_foundation:
+            reasons.append(
+                "Structured training age is under eight weeks, so progression "
+                "is capped at two percent and intensity is not increased."
+            )
+            evidence_ids.append("TRAINING_AGE_001")
         return _new_proposal(
             "deterministic",
             "progress",
             0.84,
-            3,
-            {weakest: 3},
+            progress_percent,
+            {weakest: progress_percent},
             [],
-            [
-                "Training compliance is high and recent recovery is stable.",
-                "At least one sport-specific efficiency trend is improving.",
-                "Only a small volume increase is proposed.",
-            ],
-            ["PROGRESS_SMALL_001", "ONE_VARIABLE_001", "COMPLIANCE_001"],
+            reasons,
+            evidence_ids,
         )
 
     plateau = bool(known_changes) and all(abs(value) < 1.25 for value in known_changes)
+    if high_compliance and stable_recovery and plateau and early_foundation:
+        return _new_proposal(
+            "deterministic",
+            "hold",
+            0.9,
+            0,
+            {},
+            [],
+            [
+                "Performance is approximately flat, but structured training "
+                "age is still under eight weeks.",
+                "Build consistency before adding another intensity stimulus.",
+            ],
+            ["TRAINING_AGE_001", "HOLD_WHEN_UNCERTAIN_001"],
+        )
+
     if (
         high_compliance
         and stable_recovery
@@ -526,6 +563,23 @@ def validate_proposal(
         if analysis.compliance is None or analysis.compliance < 0.80:
             errors.append("Progression requires at least 80% matched-session compliance")
 
+    if analysis.training_age_weeks is not None and analysis.training_age_weeks < 8:
+        if proposal.weekly_volume_change_percent > 2:
+            errors.append(
+                "During the first eight structured-training weeks, weekly "
+                "progression is capped at 2%"
+            )
+        if any(value > 2 for value in proposal.sport_volume_change_percent.values()):
+            errors.append(
+                "During the first eight structured-training weeks, sport "
+                "volume progression is capped at 2%"
+            )
+        if adds_intensity or proposal.decision == "change_stimulus":
+            errors.append(
+                "Interval progression is blocked during the first eight "
+                "structured-training weeks"
+            )
+
     max_hard = int(config.get("plan", {}).get("max_hard_sessions_per_week", 2))
     if adds_intensity and analysis.hard_sessions_recent_7d >= max_hard:
         errors.append("An interval increase would exceed the configured hard-session limit")
@@ -548,6 +602,17 @@ def validate_proposal(
         )
     if analysis.activity_count < 8:
         warnings.append("Fewer than eight activities were available for trend analysis.")
+    if analysis.training_age_warning:
+        warnings.append(analysis.training_age_warning)
+    elif analysis.training_age_weeks is None:
+        warnings.append(
+            "STRUCTURED_TRAINING_START_DATE is not configured; training age is not used."
+        )
+    elif analysis.training_age_weeks < 8:
+        warnings.append(
+            "The athlete is in the first eight structured-training weeks; "
+            "progression is intentionally conservative."
+        )
 
     return ValidationResult(
         accepted=not errors,
