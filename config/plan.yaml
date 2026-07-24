@@ -1,202 +1,205 @@
-# V3: adaptive triathlon base plan.
+# Ironman-focused drop-in plan for the current V4 planner.
 #
-# You choose which days are available. A blank list is a rest day. Add two
-# entries to one day for a double session. The planner will never create more
-# than max_sessions_per_day and will keep at most one hard session per day.
+# This is the best fit for the current static weekly-template engine. It gives
+# you one full rest day, 3 swims, 3 bikes, 4 runs (including a short brick),
+# and 2 strength sessions. The Garmin recent-load and recovery checks still
+# decide how much of this structure is appropriate right now.
 #
-# Garmin schedules workouts by DATE. The optional time is added to the workout
-# description as guidance; Garmin Connect does not receive it as a timed event.
+# Important: the current V4 code does not yet back-calculate phases from an
+# exact race date or create a true final taper. That should be the next code
+# update before this is treated as a complete 52-week race plan.
 
 plan:
-  name_prefix: "AI BASE V3"
+  name_prefix: "AI IRONMAN V4"
   horizon_days: 21
   plan_length_weeks: 52
 
-  # Total swim + bike + run minutes per week before block and coach adjustments.
-  base_weekly_minutes: 360
-  min_weekly_minutes: 240
-  max_weekly_minutes: 660
+  # Endurance minutes only. Strength is added separately.
+  # Recent Garmin load remains the primary starting-load guardrail.
+  base_weekly_minutes: 420
+  min_weekly_minutes: 300
+  max_weekly_minutes: 840
 
-  # Three building weeks followed by one reduced week.
-  block_growth: 0.04
-  recovery_week_factor: 0.72
+  # This is linear growth per four-week block in the current code, not a
+  # compounding weekly increase. At 5.5%, the plan can grow toward a useful
+  # full-distance peak without jumping sharply from one week to the next.
+  block_growth: 0.055
+  recovery_week_factor: 0.75
 
-  # Double-session and intensity safety limits.
   max_sessions_per_day: 2
   max_hard_sessions_per_day: 1
-  max_hard_sessions_per_week: 3
-  max_strength_sessions_per_week: 3
+  max_hard_sessions_per_week: 2
+  max_strength_sessions_per_week: 2
 
-  # The weekly coach can only adjust these generated values after validation.
-  # They are normally injected from data/coach/active_adjustment.json.
   coach_volume_multiplier: 1.0
   sport_weight_multipliers:
     run: 1.0
     bike: 1.0
     swim: 1.0
     strength: 1.0
+
   quality_progression:
     run: 0
     bike: 0
     swim: 0
 
-  # Use the previous 28 days of Garmin activities as a starting-load guardrail.
+  # Six weeks is more stable than four weeks for estimating current load.
   use_recent_garmin_load: true
-  recent_load_days: 28
+  recent_load_days: 42
 
-  # Morning recovery adaptations.
-  amber_duration_factor: 0.72
+  amber_duration_factor: 0.70
   red_duration_minutes: 30
-  # "recovery" schedules one easy session; "rest" clears the day.
   red_action: recovery
 
   pool_length_m: 33
   swim_meters_per_hour: 900
 
-# Strength sessions are deliberately simple full-body templates. The exercise
-# list is written into the Garmin workout description. Start with controlled
-# technique and roughly 2-3 repetitions in reserve rather than training to
-# failure. Change exercise names/reps to match your equipment and experience.
 strength_templates:
   full_body_a:
     rounds: 3
     target_rpe: 7
-    rest_seconds: 90
+    rest_seconds: 120
     exercises:
-      - name: Goblet squat
-        reps: "6-8"
+      - name: Squat or leg press
+        reps: "5-8"
       - name: Romanian deadlift
-        reps: "6-8"
+        reps: "5-8"
       - name: Single-arm row
-        reps: "8 each side"
-      - name: Push-up or dumbbell press
+        reps: "6-10 each side"
+      - name: Dumbbell press or push-up
+        reps: "6-10"
+      - name: Standing calf raise
         reps: "8-12"
-      - name: Calf raise
-        reps: "10-15"
       - name: Dead bug or Pallof press
-        reps: "8 each side"
+        reps: "8-12 each side"
 
   full_body_b:
     rounds: 3
     target_rpe: 7
-    rest_seconds: 90
+    rest_seconds: 120
     exercises:
       - name: Split squat
         reps: "6-8 each side"
       - name: Hip thrust
-        reps: "8-10"
+        reps: "6-10"
       - name: Lat pulldown or pull-up
         reps: "6-10"
       - name: Overhead press
         reps: "6-10"
       - name: Bent-knee soleus raise
-        reps: "12-15"
+        reps: "10-15"
       - name: Side plank
         reps: "30-45 seconds each side"
 
 training_days:
-  monday:
-    - sport: bike
-      role: endurance
-      time: "12:00"
-      primary: true
-      weight: 0.85
-      min_minutes: 60
-      max_minutes: 120
+  monday: []
 
-  # A separated double day: easy technique swim in the morning and the week's
-  # primary run-quality session later. Change or remove either entry freely.
   tuesday:
-    - sport: run
+    - sport: bike
       role: quality
       time: "14:30"
       primary: true
-      weight: 0.95
-      min_minutes: 40
-      max_minutes: 80
+      weight: 1.05
+      min_minutes: 45
+      max_minutes: 100
 
     - sport: strength
       role: strength
       template: full_body_a
       time: "19:00"
       primary: false
-      minimum_gap_hours: 1
+      minimum_gap_hours: 3
       fixed_minutes: 40
       min_minutes: 30
       max_minutes: 50
 
   wednesday:
+    - sport: run
+      role: easy
+      time: "10:30"
+      primary: false
+      weight: 0.75
+      min_minutes: 30
+      max_minutes: 65
+
+    - sport: swim
+      role: technique
+      time: "16:30"
+      primary: true
+      minimum_gap_hours: 4
+      weight: 0.75
+      min_minutes: 30
+      max_minutes: 70
+
+  thursday:
     - sport: bike
       role: easy
       time: "10:30"
       primary: false
       weight: 0.85
       min_minutes: 40
-      max_minutes: 75
+      max_minutes: 90
 
-    - sport: swim
-      role: technique
-      time: "16:30"
-      primary: true
-      minimum_gap_hours: 6
-      weight: 0.70
-      min_minutes: 30
-      max_minutes: 60
-
-  thursday:
     - sport: run
-      role: easy
+      role: quality
       time: "14:30"
       primary: true
-      weight: 0.80
-      min_minutes: 35
-      max_minutes: 65
+      minimum_gap_hours: 3
+      weight: 0.95
+      min_minutes: 40
+      max_minutes: 85
 
   friday:
     - sport: swim
       role: endurance
       time: "14:30"
       primary: true
-      weight: 0.90
+      weight: 1.05
       min_minutes: 40
-      max_minutes: 75
+      max_minutes: 100
 
     - sport: strength
       role: strength
       template: full_body_b
       time: "19:00"
       primary: false
-      minimum_gap_hours: 1
+      minimum_gap_hours: 2
       fixed_minutes: 40
-      min_minutes: 30
+      min_minutes: 25
       max_minutes: 50
 
-  # A brick is intentionally two workouts on the same Garmin calendar date.
   saturday:
     - sport: bike
       role: long
       time: "08:00"
       primary: true
-      weight: 1.55
-      min_minutes: 75
-      max_minutes: 210
+      weight: 2.80
+      min_minutes: 90
+      max_minutes: 360
 
     - sport: run
       role: brick
-      time: "11:00"
       primary: false
       after: bike
-      max_gap_minutes: 30
-      weight: 0.35
-      min_minutes: 15
-      max_minutes: 40
+      max_gap_minutes: 20
+      weight: 0.30
+      min_minutes: 10
+      max_minutes: 45
 
   sunday:
+    - sport: run
+      role: long
+      time: "08:30"
+      primary: true
+      weight: 1.45
+      min_minutes: 50
+      max_minutes: 180
+
     - sport: swim
       role: easy
       time: "14:30"
-      primary: true
-      minimum_gap_hours: 6
+      primary: false
+      minimum_gap_hours: 4
       weight: 0.70
-      min_minutes: 30
-      max_minutes: 60
+      min_minutes: 25
+      max_minutes: 65
