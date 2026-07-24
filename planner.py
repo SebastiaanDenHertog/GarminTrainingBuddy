@@ -61,6 +61,21 @@ ENDURANCE_SPORTS = {"run", "bike", "swim"}
 SEVERITY = {"UNKNOWN": 0, "GREEN": 0, "AMBER": 1, "RED": 2}
 
 
+def is_missing_workout_schedule_error(exc: Exception) -> bool:
+    """Return True only for Garmin's idempotent missing-schedule response.
+
+    A rebuild can be interrupted after Garmin removes an entry but before the
+    updated local state is saved. The next rebuild then sees the stale schedule
+    ID and Garmin correctly returns HTTP 404. Treat that one precise response as
+    "already removed" while re-raising every other API failure.
+    """
+    message = str(exc).strip().lower()
+    return (
+            "404" in message
+            and "no workout found for workout schedule" in message
+    )
+
+
 @dataclass(frozen=True)
 class Session:
     key: str
@@ -115,7 +130,7 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "plan": {
-        "name_prefix": "AI BASE",
+        "name_prefix": "BASE",
         "horizon_days": 21,
         "plan_length_weeks": 52,
         "base_weekly_minutes": 360,
@@ -1171,10 +1186,72 @@ class AdaptivePlanner:
         }
         scheduled_id = self._find_scheduled_id(record)
         if self.can_write and scheduled_id:
-            self.client.unschedule_workout(scheduled_id)
+            try:
+                self.client.unschedule_workout(scheduled_id)
+            except Exception as exc:
+                if not is_missing_workout_schedule_error(exc):
+                    raise
+
+                # The stored ID can be stale after a manual calendar edit or an
+                # interrupted rebuild. Refresh the day's calendar and remove a
+                # matching live entry when Garmin assigned it a different ID.
+                refreshed_id: int | None = None
+                raw_day = session.get("day")
+                if raw_day:
+                    session_day = date.fromisoformat(raw_day)
+                    self.calendar.invalidate(session_day)
+                    entry = self.calendar.find(
+                        session_day,
+                        workout_id=first_positive_int(
+                            record, ("workout_id", "workoutId")
+                        ),
+                        name=session.get("name"),
+                    )
+                    refreshed_id = first_positive_int(
+                        entry,
+                        (
+                            "scheduledWorkoutId",
+                            "workoutScheduleId",
+                            "scheduleId",
+                        ),
+                    )
+
+                if refreshed_id and refreshed_id != scheduled_id:
+                    try:
+                        self.client.unschedule_workout(refreshed_id)
+                    except Exception as refreshed_exc:
+                        if not is_missing_workout_schedule_error(refreshed_exc):
+                            raise
+                        action["status"] = "already_missing"
+                        action["note"] = (
+                            "The saved and refreshed Garmin schedule entries "
+                            "were already absent."
+                        )
+                    else:
+                        scheduled_id = refreshed_id
+                        action["status"] = "applied_refreshed_id"
+                        action["note"] = (
+                            "The saved Garmin schedule ID was stale; the live "
+                            "matching entry was removed using its refreshed ID."
+                        )
+                else:
+                    LOG.warning(
+                        "Garmin schedule %s for '%s' is already absent; "
+                        "continuing %s.",
+                        scheduled_id,
+                        session.get("name") or session.get("key"),
+                        reason,
+                    )
+                    action["status"] = "already_missing"
+                    action["note"] = (
+                        "Garmin returned 404 because this schedule entry had "
+                        "already been removed."
+                    )
+            else:
+                action["status"] = "applied"
+
             if session.get("day"):
                 self.calendar.invalidate(date.fromisoformat(session["day"]))
-            action["status"] = "applied"
             action["scheduled_workout_id"] = scheduled_id
             record["status"] = "cancelled"
             record["cancel_reason"] = reason
@@ -1464,6 +1541,12 @@ class AdaptivePlanner:
             if record.get("status") in {"scheduled", "adapted", "planned"}:
                 actions.append(self._unschedule_record(record, "manual rebuild"))
             self.state["sessions"].pop(key, None)
+
+            # Persist each completed removal. If Garmin or the network fails on a
+            # later record, a retry resumes from the remaining entries instead of
+            # trying to remove already-deleted schedules again.
+            save_state(self.state_path, self.state)
+
         self.state["daily_adaptations"] = {
             key: value
             for key, value in self.state["daily_adaptations"].items()
