@@ -48,5 +48,5 @@ services:
       - ./config:/config:ro
       - ./models:/models:ro
     ports:
-      - "${DASHBOARD_BIND_ADDRESS:-0.0.0.0}:${DASHBOARD_PORT:-8080}:11501"
+      - "${DASHBOARD_BIND_ADDRESS:-0.0.0.0}:${DASHBOARD_PORT:-11501}:8080"
     command: ["python", "webapp.py"]
