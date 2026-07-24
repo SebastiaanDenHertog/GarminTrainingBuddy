@@ -1,29 +1,52 @@
+x-advisor-build: &advisor-build
+  context: .
+  args:
+    TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
+
+x-advisor-environment: &advisor-environment
+  TOKEN_DIR: /tokens
+  DATA_DIR: /data
+  PLAN_CONFIG: /config/plan.yaml
+  EVIDENCE_CONFIG: /config/evidence.yaml
+  HF_HOME: /models/huggingface
+  LOCAL_AI_OFFLOAD_DIR: /models/offload
+  HOME: /tmp
+
 services:
   triathlon-advisor:
-    build:
-      context: .
-      args:
-        # CPU PyTorch is the safe default. Override this only when your Docker
-        # host is configured for a compatible GPU build.
-        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
-    container_name: garmin-adaptive-triathlon-advisor-v3
+    image: garmin-adaptive-triathlon-advisor-v4:local
+    build: *advisor-build
+    container_name: garmin-adaptive-triathlon-advisor-v4
     restart: unless-stopped
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     env_file:
       - .env
-    environment:
-      TOKEN_DIR: /tokens
-      DATA_DIR: /data
-      PLAN_CONFIG: /config/plan.yaml
-      EVIDENCE_CONFIG: /config/evidence.yaml
-      HF_HOME: /models/huggingface
-      LOCAL_AI_OFFLOAD_DIR: /models/offload
-      HOME: /tmp
+    environment: *advisor-environment
     volumes:
       - ./tokens:/tokens
       - ./data:/data
       - ./config:/config:ro
       - ./models:/models
-    # AI_BACKEND=external can still reach an Ollama/vLLM server on the host.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    command: ["python", "advisor.py", "daemon"]
+
+  triathlon-dashboard:
+    image: garmin-adaptive-triathlon-advisor-v4:local
+    build: *advisor-build
+    container_name: garmin-adaptive-triathlon-dashboard-v4
+    restart: unless-stopped
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    env_file:
+      - .env
+    environment:
+      <<: *advisor-environment
+      WEB_HOST: 0.0.0.0
+      WEB_PORT: 8080
+    volumes:
+      - ./data:/data:ro
+      - ./config:/config:ro
+      - ./models:/models:ro
+    ports:
+      - "${DASHBOARD_BIND_ADDRESS:-0.0.0.0}:${DASHBOARD_PORT:-8080}:11501"
+    command: ["python", "webapp.py"]

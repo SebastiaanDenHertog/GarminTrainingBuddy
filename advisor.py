@@ -383,11 +383,11 @@ def planner_from_env(client: Garmin) -> AdaptivePlanner:
 
 
 def write_report(
-    metrics: Metrics,
-    advice: Advice,
-    plan_result: dict[str, Any],
-    adaptation: dict[str, Any],
-    coach_review: dict[str, Any] | None = None,
+        metrics: Metrics,
+        advice: Advice,
+        plan_result: dict[str, Any],
+        adaptation: dict[str, Any],
+        coach_review: dict[str, Any] | None = None,
 ) -> tuple[Path, Path]:
     report_dir = Path(os.getenv("DATA_DIR", "/data")) / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -410,13 +410,13 @@ def write_report(
         if item.get("day") == metrics.day
     ]
     session_lines = (
-        "\n".join(
-            f"- {item['name']} — {item['sport']}, {item['duration_minutes']} min, {item['intensity']}"
-            for item in today_sessions
-        )
-        or "- No managed session is planned today."
+            "\n".join(
+                f"- {item['name']} — {item['sport']}, {item['duration_minutes']} min, {item['intensity']}"
+                for item in today_sessions
+            )
+            or "- No managed session is planned today."
     )
-    md = f"""# Adaptive triathlon report — {metrics.day}
+    md = f"""# Adaptive triathlon + strength report — {metrics.day}
 
 ## Recovery: {advice.status}
 

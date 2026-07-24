@@ -1,0 +1,22 @@
+{
+  "slug": "Garmin-Training-Analytics",
+  "name": "Garmin Training Analytics",
+  "description": "A replacement for Garmin triathlon coach because my watch does not have the ability to setup the training plan. This project will allow me to create a training plan and sync it to my watch.",
+  "project_type": "Garmin Connect",
+  "icon": "fa-bicycle",
+  "branch_color": "#308cfe",
+  "tags": [
+    "HTML",
+    "CSS",
+    "JavaScript",
+    "Python",
+    "Garmin Connect",
+    "API",
+    "Python",
+    "Flask",
+    "SQLite"
+  ],
+  "repository_url": "https://github.com/SebastiaanDenHertog/GarminTrainingBuddy",
+  "started_at": "2026-07-24T00:00:00+12:00",
+  "status": "active"
+}

@@ -25,6 +25,7 @@ plan:
   max_sessions_per_day: 2
   max_hard_sessions_per_day: 1
   max_hard_sessions_per_week: 3
+  max_strength_sessions_per_week: 3
 
   # The weekly coach can only adjust these generated values after validation.
   # They are normally injected from data/coach/active_adjustment.json.
@@ -33,6 +34,7 @@ plan:
     run: 1.0
     bike: 1.0
     swim: 1.0
+    strength: 1.0
   quality_progression:
     run: 0
     bike: 0
@@ -48,8 +50,49 @@ plan:
   # "recovery" schedules one easy session; "rest" clears the day.
   red_action: recovery
 
-  pool_length_m: 25
-  swim_meters_per_hour: 2200
+  pool_length_m: 33
+  swim_meters_per_hour: 900
+
+# Strength sessions are deliberately simple full-body templates. The exercise
+# list is written into the Garmin workout description. Start with controlled
+# technique and roughly 2-3 repetitions in reserve rather than training to
+# failure. Change exercise names/reps to match your equipment and experience.
+strength_templates:
+  full_body_a:
+    rounds: 3
+    target_rpe: 7
+    rest_seconds: 90
+    exercises:
+      - name: Goblet squat
+        reps: "6-8"
+      - name: Romanian deadlift
+        reps: "6-8"
+      - name: Single-arm row
+        reps: "8 each side"
+      - name: Push-up or dumbbell press
+        reps: "8-12"
+      - name: Calf raise
+        reps: "10-15"
+      - name: Dead bug or Pallof press
+        reps: "8 each side"
+
+  full_body_b:
+    rounds: 3
+    target_rpe: 7
+    rest_seconds: 90
+    exercises:
+      - name: Split squat
+        reps: "6-8 each side"
+      - name: Hip thrust
+        reps: "8-10"
+      - name: Lat pulldown or pull-up
+        reps: "6-10"
+      - name: Overhead press
+        reps: "6-10"
+      - name: Bent-knee soleus raise
+        reps: "12-15"
+      - name: Side plank
+        reps: "30-45 seconds each side"
 
 training_days:
   monday:
@@ -71,6 +114,16 @@ training_days:
       weight: 0.95
       min_minutes: 40
       max_minutes: 80
+
+    - sport: strength
+      role: strength
+      template: full_body_a
+      time: "19:00"
+      primary: false
+      minimum_gap_hours: 1
+      fixed_minutes: 40
+      min_minutes: 30
+      max_minutes: 50
 
   wednesday:
     - sport: bike
@@ -107,6 +160,16 @@ training_days:
       weight: 0.90
       min_minutes: 40
       max_minutes: 75
+
+    - sport: strength
+      role: strength
+      template: full_body_b
+      time: "19:00"
+      primary: false
+      minimum_gap_hours: 1
+      fixed_minutes: 40
+      min_minutes: 30
+      max_minutes: 50
 
   # A brick is intentionally two workouts on the same Garmin calendar date.
   saturday:

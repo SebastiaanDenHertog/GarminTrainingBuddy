@@ -1,0 +1,56 @@
+name: Publish portfolio update
+
+on:
+  push:
+    branches:
+      - main
+      - development
+
+  workflow_dispatch:
+    inputs:
+      title:
+        description: Public update title
+        required: true
+        type: string
+
+      description:
+        description: Public update description
+        required: true
+        type: string
+
+      update_type:
+        description: Type of update
+        required: true
+        default: feature
+        type: choice
+        options:
+          - feature
+          - fix
+          - interface
+          - hardware
+          - milestone
+          - release
+          - research
+          - refactor
+          - documentation
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Send update to portfolio API
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Publish matching updates
+        env:
+          PORTFOLIO_API_BASE_URL: ${{ vars.PORTFOLIO_API_BASE_URL }}
+          PORTFOLIO_API_TOKEN: ${{ secrets.PORTFOLIO_API_TOKEN }}
+          MANUAL_TITLE: ${{ inputs.title }}
+          MANUAL_DESCRIPTION: ${{ inputs.description }}
+          MANUAL_UPDATE_TYPE: ${{ inputs.update_type }}
+        run: python3 .github/scripts/publish_portfolio_update.py

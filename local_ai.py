@@ -261,7 +261,7 @@ def _load_embedded_model() -> tuple[Any, Any, Any]:
             from transformers import AutoModelForCausalLM, AutoTokenizer
         except ImportError as exc:
             raise RuntimeError(
-                "Embedded AI dependencies are missing. Rebuild the V3 Docker image."
+                "Embedded AI dependencies are missing. Rebuild the V4 Docker image."
             ) from exc
 
         cpu_threads = int(_env_float("LOCAL_AI_CPU_THREADS", 0))

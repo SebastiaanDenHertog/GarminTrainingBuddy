@@ -1,22 +1,26 @@
-# Garmin Adaptive Triathlon Advisor V3
+# Garmin Adaptive Triathlon + Strength Advisor V4
 
-V3 keeps the workflow as close as possible to **Garmin + Garmin Connect**:
+V4 keeps the training workflow as close as possible to **Garmin + Garmin Connect**:
 
 1. Your Garmin records sleep, HRV, readiness and completed activities.
 2. You optionally add five short feedback values to the completed activity's
    **private description** in Garmin Connect.
 3. The Docker service reads Garmin, evaluates recovery and training trends,
    validates a weekly progression proposal, and maintains structured swim,
-   bike and run workouts on the Garmin calendar.
+   bike, run and strength workouts on the Garmin calendar.
 
-No separate check-in website is required.
+No separate check-in website is required. V4 adds an optional **read-only local dashboard** for viewing the plan and coach decisions; feedback still stays inside Garmin Connect.
 
 > This is a conservative training-planning tool, not medical care. Pain,
 > illness, dizziness, chest symptoms or unusual breathlessness always override
 > the automated plan.
 
-## What is new in V3
+## What is new in V4
 
+- Adds configurable full-body strength sessions and exercise templates.
+- Keeps strength minutes separate from the swim/bike/run weekly-volume target.
+- Shows recovery, sleep, readiness, training analysis, AI status and the next
+  21 days in an optional read-only web dashboard.
 - Reads soreness, fatigue, motivation, pain/injury and session RPE from Garmin
   activity descriptions.
 - Supports multiple sessions on the same day.
@@ -30,7 +34,7 @@ No separate check-in website is required.
   date, sport and duration.
 - Compares recent and previous sport-specific efficiency trends.
 - Produces a deterministic weekly progression recommendation.
-- Can load `Qwen/Qwen3-30B-A3B` directly inside the V3 Docker service.
+- Can load `Qwen/Qwen3-30B-A3B` directly inside the V4 Docker service.
 - Checks host and Docker/cgroup memory before loading the embedded model.
 - Can still use an external OpenAI-compatible Ollama or vLLM endpoint.
 - Validates every proposal with hard Python rules and a local evidence catalog.
@@ -81,6 +85,67 @@ Show the accepted format from the container:
 docker compose run --rm triathlon-advisor python advisor.py feedback-help
 ```
 
+## Strength training
+
+V4 treats strength as a planned sport alongside run, bike and swim. The default
+week contains one 40-minute full-body session on Wednesday after an easy bike.
+It is a secondary session, so an AMBER morning removes it before the primary
+session is changed.
+
+Strength minutes use `fixed_minutes` and are **not subtracted from the endurance
+weekly target**. The default 360-minute target continues to mean swim + bike +
+run; strength is added separately.
+
+Exercise templates live under `strength_templates` in `config/plan.yaml`:
+
+```yaml
+strength_templates:
+  full_body_a:
+    rounds: 3
+    target_rpe: 7
+    rest_seconds: 90
+    exercises:
+      - name: Goblet squat
+        reps: "6-8"
+      - name: Romanian deadlift
+        reps: "6-8"
+      - name: Single-arm row
+        reps: "8 each side"
+```
+
+Schedule a template like this:
+
+```yaml
+wednesday:
+  - sport: strength
+    role: strength
+    template: full_body_a
+    time: "19:00"
+    primary: false
+    fixed_minutes: 40
+    min_minutes: 30
+    max_minutes: 50
+```
+
+A second weekly session can use `full_body_b`, provided the configured count
+stays within:
+
+```yaml
+plan:
+  max_strength_sessions_per_week: 2
+```
+
+The exercise list, rounds, RPE target and rest guidance are written into the
+Garmin workout description and displayed in the local dashboard. Recovery weeks
+shorten the session and change it to `strength_maintenance`. A RED day removes
+strength and schedules only an easy endurance recovery session when one is
+appropriate.
+
+The current Garmin client library does not expose a dedicated typed
+`StrengthWorkout` model. V4 therefore uploads a generic Garmin workout with the
+strength sport type. Keep Garmin writes disabled until the generated strength
+workout has been checked on your own watch and Garmin Connect.
+
 ## Multiple sessions per day
 
 Add multiple entries under a weekday in `config/plan.yaml`.
@@ -130,7 +195,7 @@ saturday:
     max_minutes: 40
 ```
 
-Garmin workout scheduling is date-based. V3 adds the configured time and
+Garmin workout scheduling is date-based. V4 adds the configured time and
 relationship to the workout description as guidance, but it does not create a
 clock-time calendar event.
 
@@ -147,6 +212,44 @@ You can set `max_sessions_per_day: 3`, but only one session may remain hard. A
 RED morning removes all managed sessions for that day. An AMBER morning removes
 secondary sessions first and downgrades the primary demanding session.
 
+## Read-only training dashboard
+
+The dashboard is optional and does not replace Garmin activity feedback. It
+reads the JSON files already written under `data/` and shows:
+
+- today's recovery status, Training Readiness and sleep;
+- the recommendation and reasons;
+- run, bike, swim and strength minutes for the next seven days;
+- the complete rolling 21-day schedule, including strength exercises;
+- the latest training analysis and weekly coach explanation;
+- embedded-AI state, RAM-check result, shadow mode and Garmin-write status.
+
+Start both services:
+
+```bash
+docker compose up -d
+```
+
+Open:
+
+```text
+http://YOUR_SERVER_IP:8080
+```
+
+Change the bind address or host port in `.env`:
+
+```env
+DASHBOARD_BIND_ADDRESS=0.0.0.0
+DASHBOARD_PORT=8080
+```
+
+Use `127.0.0.1` as the bind address when the dashboard should only be reachable through an SSH tunnel or local reverse proxy.
+
+The interface is deliberately read-only: it cannot trigger a plan rebuild,
+change configuration, or write to Garmin. It has no login screen, so keep it on
+your trusted home/LAN network or place it behind your existing authenticated
+reverse proxy. Do not expose port 8080 directly to the public internet.
+
 ## Structured training start date
 
 Set the date you began **consistent structured endurance or triathlon training**
@@ -161,7 +264,7 @@ value is included in analytics and in the facts sent to the local model. It is
 background context only: it never overrides current Garmin performance,
 recovery, compliance, pain/injury feedback or recent training history.
 
-During the first eight structured-training weeks, V3 caps positive progression
+During the first eight structured-training weeks, V4 caps positive progression
 at 2% and blocks added interval intensity. From week eight onward, the normal
 performance-and-recovery rules apply. A long training age does not automatically
 make the plan harder; measured adaptation still has to support the change.
@@ -199,7 +302,7 @@ follows pain/high-fatigue feedback.
 
 The model only receives summarized metrics and returns a small JSON proposal.
 It never receives Garmin credentials and never calls Garmin. When the embedded
-backend is enabled, the model is loaded lazily in the same V3 Python process;
+backend is enabled, the model is loaded lazily in the same V4 Python process;
 with AI disabled, PyTorch and Transformers are not initialized.
 
 The pipeline is:
@@ -218,16 +321,16 @@ Garmin data
 The local evidence catalog is `config/evidence.yaml`. Every proposal must use
 known evidence IDs whose allowed decision matches the proposal.
 
-## 1. Install or upgrade from V2
+## 1. Install or upgrade from V3
 
-Extract V3 beside the old project. Copy your existing Garmin tokens so you do
+Extract V4 beside the current V3 project. Copy your existing Garmin tokens so you do
 not need to log in again:
 
 ```bash
 cp -a ../garmin-adaptive-triathlon-advisor/tokens ./tokens
 ```
 
-You may also copy `data/` to preserve planner history. V3 can read V2 planner
+You may also copy `data/` to preserve planner history. V4 can read earlier planner
 state; new session fields have safe defaults.
 
 Then configure:
@@ -310,7 +413,7 @@ data/coach/proposals/
 In shadow mode, `applied` stays false and the Garmin plan remains unchanged.
 Review several weeks of proposals before allowing application.
 
-## 5. Enable the model built into V3
+## 5. Enable the model built into V4
 
 The normal Docker image contains the Python, Transformers and PyTorch code needed
 to load `Qwen/Qwen3-30B-A3B` directly. The model weights are downloaded on the
@@ -354,7 +457,7 @@ AI_SHADOW_MODE=true
 COACH_AUTO_APPLY=false
 ```
 
-`LOCAL_AI_REQUIRED_RAM_GB=0` means V3 calculates a conservative requirement from
+`LOCAL_AI_REQUIRED_RAM_GB=0` means V4 calculates a conservative requirement from
 the parameter count in the model name. A positive value overrides that estimate.
 In `strict` mode, insufficient or unmeasurable RAM prevents model loading and the
 weekly review falls back to the deterministic proposal. `warn` mode records the
@@ -384,7 +487,7 @@ AI_MODEL=qwen3:30b-a3b
 AI_API_KEY=ollama
 ```
 
-If model loading, an external endpoint, or JSON parsing fails, V3 records the
+If model loading, an external endpoint, or JSON parsing fails, V4 records the
 error and uses the deterministic proposal as the safe reference. An invalid AI
 proposal is never applied.
 
@@ -419,18 +522,25 @@ DRY_RUN=false
 Keep the AI switches and Garmin-write switches separate while testing.
 
 After an applied adjustment changes future generated workouts, preview first.
-Use `rebuild` only when you intentionally want future V3-managed Garmin calendar
+Use `rebuild` only when you intentionally want future V4-managed Garmin calendar
 entries recreated:
 
 ```bash
 docker compose run --rm triathlon-advisor python advisor.py rebuild
 ```
 
-## 7. Start the service
+## 7. Start the advisor and dashboard
 
 ```bash
 docker compose up -d
-docker compose logs -f
+docker compose logs -f triathlon-advisor
+```
+
+The dashboard is then available at `http://YOUR_SERVER_IP:8080`. Its container
+logs are separate:
+
+```bash
+docker compose logs -f triathlon-dashboard
 ```
 
 The daily job:
@@ -444,7 +554,7 @@ The daily job:
 ## Outcome checking
 
 An applied proposal is not automatically considered correct. After at least two
-weeks, V3 compares the new analysis with the saved baseline. It marks the
+weeks, V4 compares the new analysis with the saved baseline. It marks the
 proposal outcome:
 
 - `positive`: efficiency improved without a meaningful compliance/recovery cost
@@ -461,13 +571,14 @@ illness and life stress can affect the measurements.
 python advisor.py login          Interactive Garmin login
 python advisor.py run            Daily recovery + planning run
 python advisor.py plan           Preview or extend the rolling plan
-python advisor.py rebuild        Recreate future V3-managed workouts
+python advisor.py rebuild        Recreate future V4-managed workouts
 python advisor.py status         Show planner and active-coach state
 python advisor.py analyze        Build the 42-day training analysis
 python advisor.py coach          Force a weekly coach proposal
 python advisor.py feedback-help  Print the Garmin description format
 python advisor.py ai-check       Check RAM before loading embedded AI
 python advisor.py daemon         Run the scheduled service
+python webapp.py                  Run the read-only dashboard directly
 ```
 
 ## Tests
@@ -475,26 +586,31 @@ python advisor.py daemon         Run the scheduled service
 The feedback parser and coach validator can be tested without Garmin:
 
 ```bash
-python -m unittest -v test_analytics.py test_feedback.py test_coach.py test_local_ai.py
+python -m unittest -v test_analytics.py test_feedback.py test_coach.py test_local_ai.py test_dashboard.py
 ```
 
 The complete Docker image also includes the planner tests:
 
 ```bash
 docker compose run --rm triathlon-advisor \
-  python -m unittest -v test_planner.py test_analytics.py test_feedback.py test_coach.py test_local_ai.py
+  python -m unittest -v test_planner.py test_analytics.py test_feedback.py test_coach.py test_local_ai.py test_dashboard.py
 ```
 
 ## Limitations
 
 - `python-garminconnect` uses unofficial Garmin Connect endpoints that Garmin can
   change.
+- Strength is currently uploaded through the generic workout endpoint with the
+  Garmin strength sport type. Exercise names and rep targets are carried in the
+  workout description rather than native per-set watch steps.
+- The dashboard has no built-in authentication and should stay on a trusted
+  network or behind an authenticated reverse proxy.
 - Garmin activity descriptions may have different response field names over
-  time. V3 checks several known fields and a conservative recursive fallback.
+  time. V4 checks several known fields and a conservative recursive fallback.
 - Efficiency comparisons need reasonably similar activities and reliable heart
   rate or power data. The validator holds when the data is insufficient.
 - Pool workouts are distance-based and require the correct `pool_length_m`.
-- V3 does not assess swim technique, diagnose injury or know your full life
+- V4 does not assess swim technique, diagnose injury or know your full life
   stress.
 - The embedded model requires a large download and substantial RAM. The preflight
   estimate is intentionally conservative but cannot guarantee that loading will

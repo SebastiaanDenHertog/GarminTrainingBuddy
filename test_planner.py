@@ -13,10 +13,10 @@ from planner import (
 
 
 class PlannerTests(unittest.TestCase):
-    def test_default_week_contains_all_three_sports(self) -> None:
+    def test_default_week_contains_endurance_and_strength(self) -> None:
         start = date(2026, 7, 20)
         sessions = build_week_sessions(DEFAULT_CONFIG, start, start, 360)
-        self.assertEqual({item.sport for item in sessions}, {"run", "bike", "swim"})
+        self.assertEqual({item.sport for item in sessions}, {"run", "bike", "swim", "strength"})
         self.assertLessEqual(
             sum(item.intensity == "hard" for item in sessions),
             DEFAULT_CONFIG["plan"]["max_hard_sessions_per_week"],
@@ -42,6 +42,15 @@ class PlannerTests(unittest.TestCase):
         )
         self.assertTrue(sessions)
         self.assertTrue(all(start <= date.fromisoformat(s.day) <= start + timedelta(days=20) for s in sessions))
+
+    def test_strength_session_uses_template_and_fixed_duration(self) -> None:
+        start = date(2026, 7, 20)
+        sessions = build_week_sessions(DEFAULT_CONFIG, start, start, 360)
+        strength = next(item for item in sessions if item.sport == "strength")
+        self.assertEqual(strength.strength_template, "full_body_a")
+        self.assertEqual(strength.duration_minutes, 40)
+        self.assertTrue(strength.strength_exercises)
+        self.assertIn("Goblet squat", strength.description)
 
     def test_workouts_serialize(self) -> None:
         start = date(2026, 7, 20)

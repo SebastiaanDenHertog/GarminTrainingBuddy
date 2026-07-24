@@ -22,6 +22,7 @@ LOG = logging.getLogger("garmin-ai-coach")
 ALLOWED_DECISIONS = {"hold", "progress", "reduce", "change_stimulus"}
 ALLOWED_QUALITY_ACTIONS = {"maintain", "add_interval", "remove_interval", "rotate"}
 SPORTS = {"run", "bike", "swim"}
+PLANNED_SPORTS = {"run", "bike", "swim", "strength"}
 
 
 @dataclass
@@ -109,15 +110,15 @@ def compact_analysis(analysis: TrainingAnalysis) -> dict[str, Any]:
 
 
 def _new_proposal(
-    source: str,
-    decision: str,
-    confidence: float,
-    weekly_change: float,
-    sport_changes: dict[str, float],
-    quality_changes: list[dict[str, Any]],
-    reasons: list[str],
-    evidence: list[str],
-    valid_for_weeks: int = 1,
+        source: str,
+        decision: str,
+        confidence: float,
+        weekly_change: float,
+        sport_changes: dict[str, float],
+        quality_changes: list[dict[str, Any]],
+        reasons: list[str],
+        evidence: list[str],
+        valid_for_weeks: int = 1,
 ) -> CoachProposal:
     return CoachProposal(
         proposal_id=f"coach-{date.today().isoformat()}-{uuid.uuid4().hex[:8]}",
@@ -137,8 +138,8 @@ def _new_proposal(
 
 
 def deterministic_proposal(
-    analysis: TrainingAnalysis,
-    config: dict[str, Any],
+        analysis: TrainingAnalysis,
+        config: dict[str, Any],
 ) -> CoachProposal:
     max_hard = int(config.get("plan", {}).get("max_hard_sessions_per_week", 2))
     efficiency = analysis.efficiency_change_percent
@@ -160,10 +161,10 @@ def deterministic_proposal(
         )
 
     if (
-        analysis.high_soreness_reported
-        or analysis.high_fatigue_reported
-        or analysis.low_motivation_reported
-        or analysis.recovery_red_days >= 2
+            analysis.high_soreness_reported
+            or analysis.high_fatigue_reported
+            or analysis.low_motivation_reported
+            or analysis.recovery_red_days >= 2
     ):
         return _new_proposal(
             "deterministic",
@@ -287,10 +288,10 @@ def deterministic_proposal(
         )
 
     if (
-        high_compliance
-        and stable_recovery
-        and plateau
-        and analysis.hard_sessions_recent_7d < max_hard
+            high_compliance
+            and stable_recovery
+            and plateau
+            and analysis.hard_sessions_recent_7d < max_hard
     ):
         target_sport = min(
             (
@@ -345,7 +346,7 @@ def _extract_json(text: str) -> dict[str, Any]:
     start = stripped.find("{")
     end = stripped.rfind("}")
     if start >= 0 and end > start:
-        value = json.loads(stripped[start : end + 1])
+        value = json.loads(stripped[start: end + 1])
         if isinstance(value, dict):
             return value
     raise ValueError("AI response did not contain a JSON object.")
@@ -494,11 +495,12 @@ def request_ai_proposal(
         f"Unsupported AI_BACKEND={backend!r}; use 'embedded' or 'external'."
     )
 
+
 def validate_proposal(
-    proposal: CoachProposal,
-    analysis: TrainingAnalysis,
-    config: dict[str, Any],
-    evidence: dict[str, dict[str, Any]],
+        proposal: CoachProposal,
+        analysis: TrainingAnalysis,
+        config: dict[str, Any],
+        evidence: dict[str, dict[str, Any]],
 ) -> ValidationResult:
     errors: list[str] = []
     warnings: list[str] = []
@@ -587,9 +589,9 @@ def validate_proposal(
     if positive_volume and adds_intensity:
         errors.append("Volume and intensity may not both increase in the same proposal")
     if proposal.decision == "hold" and (
-        proposal.weekly_volume_change_percent != 0
-        or any(value != 0 for value in proposal.sport_volume_change_percent.values())
-        or proposal.quality_changes
+            proposal.weekly_volume_change_percent != 0
+            or any(value != 0 for value in proposal.sport_volume_change_percent.values())
+            or proposal.quality_changes
     ):
         errors.append("A hold proposal may not change volume or quality")
     if proposal.decision == "reduce" and proposal.weekly_volume_change_percent > 0:
@@ -626,7 +628,7 @@ def _default_adjustment() -> dict[str, Any]:
     return {
         "version": 1,
         "weekly_volume_multiplier": 1.0,
-        "sport_weight_multipliers": {"run": 1.0, "bike": 1.0, "swim": 1.0},
+        "sport_weight_multipliers": {"run": 1.0, "bike": 1.0, "swim": 1.0, "strength": 1.0},
         "quality_progression": {"run": 0, "bike": 0, "swim": 0},
         "proposal_id": None,
         "valid_until": None,
@@ -656,7 +658,7 @@ def load_active_adjustment(data_dir: Path, today: date | None = None) -> dict[st
 
 
 def apply_adjustment_to_config(
-    config: dict[str, Any], data_dir: Path, today: date | None = None
+        config: dict[str, Any], data_dir: Path, today: date | None = None
 ) -> dict[str, Any]:
     result = copy.deepcopy(config)
     adjustment = load_active_adjustment(data_dir, today)
@@ -665,7 +667,7 @@ def apply_adjustment_to_config(
     )
     result["plan"]["sport_weight_multipliers"] = {
         sport: float((adjustment.get("sport_weight_multipliers") or {}).get(sport, 1.0))
-        for sport in SPORTS
+        for sport in PLANNED_SPORTS
     }
     result["plan"]["quality_progression"] = {
         sport: int((adjustment.get("quality_progression") or {}).get(sport, 0))
@@ -676,9 +678,9 @@ def apply_adjustment_to_config(
 
 
 def _write_active_adjustment(
-    proposal: CoachProposal,
-    data_dir: Path,
-    today: date,
+        proposal: CoachProposal,
+        data_dir: Path,
+        today: date,
 ) -> Path:
     current = load_active_adjustment(data_dir, today)
     weekly_multiplier = float(current.get("weekly_volume_multiplier", 1.0))
@@ -686,8 +688,10 @@ def _write_active_adjustment(
     weekly_multiplier = round(max(0.85, min(1.15, weekly_multiplier)), 4)
 
     sport_multipliers = dict(current.get("sport_weight_multipliers") or {})
-    for sport in SPORTS:
+    for sport in PLANNED_SPORTS:
         value = float(sport_multipliers.get(sport, 1.0))
+        # The AI currently changes endurance sports only. Strength follows the
+        # validated weekly multiplier and phase-specific planner rules.
         value *= 1 + proposal.sport_volume_change_percent.get(sport, 0) / 100
         sport_multipliers[sport] = round(max(0.80, min(1.20, value)), 4)
 
@@ -770,9 +774,9 @@ def evaluate_outcomes(data_dir: Path, analysis: TrainingAnalysis, today: date) -
         positive_signal = any(value >= 1.0 for value in efficiency_now)
         negative_signal = any(value <= -3.0 for value in efficiency_now)
         compliance_drop = (
-            baseline_compliance is not None
-            and current_compliance is not None
-            and current_compliance < float(baseline_compliance) - 0.12
+                baseline_compliance is not None
+                and current_compliance is not None
+                and current_compliance < float(baseline_compliance) - 0.12
         )
         if analysis.pain_reported or compliance_drop or analysis.recovery_red_days > baseline_red + 1 or negative_signal:
             label = "negative"
@@ -793,12 +797,12 @@ def evaluate_outcomes(data_dir: Path, analysis: TrainingAnalysis, today: date) -
 
 
 def run_weekly_review(
-    client: Any,
-    today: date,
-    data_dir: Path,
-    config: dict[str, Any],
-    *,
-    force: bool = False,
+        client: Any,
+        today: date,
+        data_dir: Path,
+        config: dict[str, Any],
+        *,
+        force: bool = False,
 ) -> dict[str, Any]:
     existing = _existing_weekly_proposal(data_dir, today)
     if existing and not force:

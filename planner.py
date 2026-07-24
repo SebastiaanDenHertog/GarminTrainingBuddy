@@ -15,6 +15,7 @@ from garminconnect import Garmin
 
 from coach import apply_adjustment_to_config
 from garminconnect.workout import (
+    BaseWorkout,
     ConditionType,
     CyclingWorkout,
     ExecutableStep,
@@ -48,7 +49,14 @@ SPORT_TYPE = {
     "run": {"sportTypeId": SportType.RUNNING, "sportTypeKey": "running", "displayOrder": 1},
     "bike": {"sportTypeId": SportType.CYCLING, "sportTypeKey": "cycling", "displayOrder": 2},
     "swim": {"sportTypeId": SportType.SWIMMING, "sportTypeKey": "swimming", "displayOrder": 3},
+    "strength": {
+        "sportTypeId": SportType.STRENGTH_TRAINING,
+        "sportTypeKey": "strength_training",
+        "displayOrder": 5,
+    },
 }
+
+ENDURANCE_SPORTS = {"run", "bike", "swim"}
 
 SEVERITY = {"UNKNOWN": 0, "GREEN": 0, "AMBER": 1, "RED": 2}
 
@@ -72,6 +80,8 @@ class Session:
     after: str | None = None
     minimum_gap_hours: float | None = None
     max_gap_minutes: int | None = None
+    strength_template: str | None = None
+    strength_exercises: tuple[dict[str, Any], ...] = ()
 
     def fingerprint(self) -> str:
         payload = asdict(self)
@@ -119,33 +129,76 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_sessions_per_day": 2,
         "max_hard_sessions_per_day": 1,
         "coach_volume_multiplier": 1.0,
-        "sport_weight_multipliers": {"run": 1.0, "bike": 1.0, "swim": 1.0},
+        "sport_weight_multipliers": {
+            "run": 1.0,
+            "bike": 1.0,
+            "swim": 1.0,
+            "strength": 1.0,
+        },
         "quality_progression": {"run": 0, "bike": 0, "swim": 0},
+        "max_strength_sessions_per_week": 2,
         "amber_duration_factor": 0.72,
         "red_duration_minutes": 30,
         "pool_length_m": 25,
         "swim_meters_per_hour": 2200,
     },
+    "strength_templates": {
+        "full_body_a": {
+            "rounds": 3,
+            "target_rpe": 7,
+            "rest_seconds": 90,
+            "exercises": [
+                {"name": "Goblet squat", "reps": "6-8"},
+                {"name": "Romanian deadlift", "reps": "6-8"},
+                {"name": "Single-arm row", "reps": "8 each side"},
+                {"name": "Push-up or dumbbell press", "reps": "8-12"},
+                {"name": "Calf raise", "reps": "10-15"},
+                {"name": "Dead bug or Pallof press", "reps": "8 each side"},
+            ],
+        },
+        "full_body_b": {
+            "rounds": 3,
+            "target_rpe": 7,
+            "rest_seconds": 90,
+            "exercises": [
+                {"name": "Split squat", "reps": "6-8 each side"},
+                {"name": "Hip thrust", "reps": "8-10"},
+                {"name": "Lat pulldown or pull-up", "reps": "6-10"},
+                {"name": "Overhead press", "reps": "6-10"},
+                {"name": "Bent-knee soleus raise", "reps": "12-15"},
+                {"name": "Side plank", "reps": "30-45 seconds each side"},
+            ],
+        },
+    },
     "training_days": {
         "monday": [],
         "tuesday": [
-            {"sport": "swim", "role": "technique", "weight": 0.85, "min_minutes": 35, "max_minutes": 65, "time": "06:30", "primary": True}
+            {"sport": "swim", "role": "technique", "weight": 0.85, "min_minutes": 35, "max_minutes": 65,
+             "time": "06:30", "primary": True}
         ],
         "wednesday": [
-            {"sport": "bike", "role": "quality", "weight": 1.05, "min_minutes": 45, "max_minutes": 85, "time": "17:30", "primary": True}
+            {"sport": "bike", "role": "easy", "weight": 0.85, "min_minutes": 40, "max_minutes": 75, "time": "17:30",
+             "primary": True},
+            {"sport": "strength", "role": "strength", "template": "full_body_a", "fixed_minutes": 40, "min_minutes": 30,
+             "max_minutes": 50, "time": "19:00", "primary": False, "minimum_gap_hours": 1.0},
         ],
         "thursday": [
-            {"sport": "run", "role": "easy", "weight": 0.85, "min_minutes": 35, "max_minutes": 65, "time": "17:30", "primary": True}
+            {"sport": "run", "role": "easy", "weight": 0.85, "min_minutes": 35, "max_minutes": 65, "time": "17:30",
+             "primary": True}
         ],
         "friday": [
-            {"sport": "swim", "role": "endurance", "weight": 0.90, "min_minutes": 40, "max_minutes": 70, "time": "06:30", "primary": True}
+            {"sport": "swim", "role": "endurance", "weight": 0.90, "min_minutes": 40, "max_minutes": 70,
+             "time": "06:30", "primary": True}
         ],
         "saturday": [
-            {"sport": "bike", "role": "long", "weight": 1.55, "min_minutes": 70, "max_minutes": 180, "time": "08:00", "primary": True},
-            {"sport": "run", "role": "brick", "weight": 0.35, "min_minutes": 15, "max_minutes": 35, "time": "11:00", "primary": False, "after": "bike", "max_gap_minutes": 30},
+            {"sport": "bike", "role": "long", "weight": 1.55, "min_minutes": 70, "max_minutes": 180, "time": "08:00",
+             "primary": True},
+            {"sport": "run", "role": "brick", "weight": 0.35, "min_minutes": 15, "max_minutes": 35, "time": "11:00",
+             "primary": False, "after": "bike", "max_gap_minutes": 30},
         ],
         "sunday": [
-            {"sport": "run", "role": "long", "weight": 1.25, "min_minutes": 55, "max_minutes": 120, "time": "09:00", "primary": True}
+            {"sport": "run", "role": "long", "weight": 1.25, "min_minutes": 55, "max_minutes": 120, "time": "09:00",
+             "primary": True}
         ],
     },
 }
@@ -170,11 +223,11 @@ def validate_config(config: dict[str, Any]) -> None:
         raise PlannerConfigError("Config needs 'plan' and 'training_days' mappings.")
 
     for key in (
-        "horizon_days",
-        "plan_length_weeks",
-        "base_weekly_minutes",
-        "min_weekly_minutes",
-        "max_weekly_minutes",
+            "horizon_days",
+            "plan_length_weeks",
+            "base_weekly_minutes",
+            "min_weekly_minutes",
+            "max_weekly_minutes",
     ):
         if int(plan.get(key, 0)) <= 0:
             raise PlannerConfigError(f"plan.{key} must be greater than zero.")
@@ -195,7 +248,8 @@ def validate_config(config: dict[str, Any]) -> None:
             raise PlannerConfigError(
                 f"{day_name} has {len(slots)} sessions, above max_sessions_per_day={max_per_day}."
             )
-        primary_count = sum(bool(slot.get("primary", index == 0)) for index, slot in enumerate(slots) if isinstance(slot, dict))
+        primary_count = sum(
+            bool(slot.get("primary", index == 0)) for index, slot in enumerate(slots) if isinstance(slot, dict))
         if slots and primary_count == 0:
             raise PlannerConfigError(f"{day_name} needs at least one primary session.")
         for slot in slots:
@@ -205,10 +259,15 @@ def validate_config(config: dict[str, Any]) -> None:
             if slot.get("sport") not in SPORT_TYPE:
                 raise PlannerConfigError(
                     f"Unsupported sport on {day_name}: {slot.get('sport')}. "
-                    "Use run, bike, or swim."
+                    "Use run, bike, swim, or strength."
                 )
-            if float(slot.get("weight", 0)) <= 0:
-                raise PlannerConfigError(f"Slot weight on {day_name} must be positive.")
+            fixed_minutes = slot.get("fixed_minutes")
+            if fixed_minutes is not None and int(fixed_minutes) <= 0:
+                raise PlannerConfigError(f"fixed_minutes on {day_name} must be positive.")
+            if fixed_minutes is None and float(slot.get("weight", 0)) <= 0:
+                raise PlannerConfigError(
+                    f"Slot weight on {day_name} must be positive when fixed_minutes is not set."
+                )
             if int(slot.get("min_minutes", 0)) <= 0:
                 raise PlannerConfigError(f"min_minutes on {day_name} must be positive.")
             if int(slot.get("max_minutes", 0)) < int(slot["min_minutes"]):
@@ -227,6 +286,26 @@ def validate_config(config: dict[str, Any]) -> None:
                 raise PlannerConfigError(f"minimum_gap_hours on {day_name} cannot be negative.")
             if slot.get("max_gap_minutes") is not None and int(slot["max_gap_minutes"]) < 0:
                 raise PlannerConfigError(f"max_gap_minutes on {day_name} cannot be negative.")
+    strength_templates = config.get("strength_templates") or {}
+    if not isinstance(strength_templates, dict):
+        raise PlannerConfigError("strength_templates must be a mapping.")
+    strength_count = 0
+    for day_name, slots in days.items():
+        for slot in slots or []:
+            if slot.get("sport") != "strength":
+                continue
+            strength_count += 1
+            template_name = str(slot.get("template", "")).strip()
+            if not template_name or template_name not in strength_templates:
+                raise PlannerConfigError(
+                    f"Strength slot on {day_name} needs a known template name."
+                )
+    max_strength = int(plan.get("max_strength_sessions_per_week", 2))
+    if strength_count > max_strength:
+        raise PlannerConfigError(
+            f"Configured {strength_count} strength sessions, above "
+            f"max_strength_sessions_per_week={max_strength}."
+        )
     if session_count < 3:
         raise PlannerConfigError("Configure at least three weekly sessions.")
 
@@ -275,11 +354,11 @@ def number(value: Any) -> float | None:
 
 def activity_sport(activity: dict[str, Any]) -> str | None:
     raw = (
-        get_nested(activity, "activityType", "typeKey")
-        or get_nested(activity, "activityType", "typeKey")
-        or activity.get("activityTypeKey")
-        or activity.get("sportType")
-        or ""
+            get_nested(activity, "activityType", "typeKey")
+            or get_nested(activity, "activityType", "typeKey")
+            or activity.get("activityTypeKey")
+            or activity.get("sportType")
+            or ""
     )
     key = str(raw).lower()
     if "run" in key or "treadmill" in key or "track" in key:
@@ -288,6 +367,8 @@ def activity_sport(activity: dict[str, Any]) -> str | None:
         return "bike"
     if "swim" in key:
         return "swim"
+    if "strength" in key or "weight" in key or "resistance" in key:
+        return "strength"
     return None
 
 
@@ -302,9 +383,9 @@ def activity_duration_minutes(activity: dict[str, Any]) -> int:
 
 def activity_day(activity: dict[str, Any]) -> date | None:
     raw = (
-        activity.get("startTimeLocal")
-        or activity.get("startTimeGMT")
-        or activity.get("calendarDate")
+            activity.get("startTimeLocal")
+            or activity.get("startTimeGMT")
+            or activity.get("calendarDate")
     )
     if not raw:
         return None
@@ -325,9 +406,9 @@ def fetch_recent_load(client: Garmin, today: date, days: int) -> RecentLoad:
         )
     except Exception as exc:
         LOG.warning("Could not read recent Garmin activities: %s", exc)
-        return RecentLoad(days, 0, None, 0, {"run": 0, "bike": 0, "swim": 0})
+        return RecentLoad(days, 0, None, 0, {"run": 0, "bike": 0, "swim": 0, "strength": 0})
 
-    by_sport = {"run": 0, "bike": 0, "swim": 0}
+    by_sport = {"run": 0, "bike": 0, "swim": 0, "strength": 0}
     weekly: dict[str, int] = {}
     for activity in activities:
         if not isinstance(activity, dict):
@@ -338,8 +419,11 @@ def fetch_recent_load(client: Garmin, today: date, days: int) -> RecentLoad:
         if sport is None or duration <= 0 or when is None:
             continue
         by_sport[sport] += duration
-        week_key = monday_of(when).isoformat()
-        weekly[week_key] = weekly.get(week_key, 0) + duration
+        # Strength is tracked, but it must not inflate the endurance-volume
+        # baseline used to size swim/bike/run work.
+        if sport in ENDURANCE_SPORTS:
+            week_key = monday_of(when).isoformat()
+            weekly[week_key] = weekly.get(week_key, 0) + duration
 
     active_values = [value for value in weekly.values() if value >= 30]
     weekly_average = (
@@ -373,7 +457,7 @@ def effective_base_minutes(config: dict[str, Any], recent: RecentLoad) -> int:
 
 
 def weekly_target_minutes(
-    config: dict[str, Any], week_index: int, base_minutes: int
+        config: dict[str, Any], week_index: int, base_minutes: int
 ) -> int:
     plan = config["plan"]
     growth = float(plan.get("block_growth", 0.04))
@@ -391,9 +475,16 @@ def weekly_target_minutes(
     )
 
 
-def slot_duration(slot: dict[str, Any], share_minutes: float) -> int:
+def slot_duration(
+        slot: dict[str, Any], share_minutes: float, multiplier: float = 1.0
+) -> int:
+    requested = (
+        float(slot["fixed_minutes"]) * multiplier
+        if slot.get("fixed_minutes") is not None
+        else share_minutes
+    )
     value = clamp(
-        share_minutes,
+        requested,
         int(slot["min_minutes"]),
         int(slot["max_minutes"]),
     )
@@ -401,24 +492,24 @@ def slot_duration(slot: dict[str, Any], share_minutes: float) -> int:
 
 
 def role_intensity(role: str) -> str:
-    if role == "quality":
+    if role in {"quality", "strength_power"}:
         return "hard"
     if role == "long":
         return "long"
-    if role == "endurance":
+    if role in {"endurance", "strength"}:
         return "moderate"
     return "easy"
 
 
 def session_title(
-    prefix: str,
-    week_index: int,
-    sport: str,
-    role: str,
-    phase: str,
-    duration: int,
+        prefix: str,
+        week_index: int,
+        sport: str,
+        role: str,
+        phase: str,
+        duration: int,
 ) -> str:
-    sport_title = {"run": "Run", "bike": "Bike", "swim": "Swim"}[sport]
+    sport_title = {"run": "Run", "bike": "Bike", "swim": "Swim", "strength": "Strength"}[sport]
     role_title = {
         "technique": "Technique",
         "easy": "Easy",
@@ -427,6 +518,9 @@ def session_title(
         "long": "Long",
         "brick": "Brick",
         "recovery": "Recovery",
+        "strength": "Full Body",
+        "strength_maintenance": "Maintenance",
+        "strength_power": "Power",
     }.get(role, role.title())
     phase_tag = {
         "foundation": "Foundation",
@@ -437,18 +531,54 @@ def session_title(
     return f"[{prefix}] W{week_index + 1:02d} {sport_title} {role_title} {duration}m {phase_tag}"[:80]
 
 
-def session_description(
-    sport: str, role: str, phase: str, duration: int, week_index: int
+def _strength_template_description(
+        template_name: str | None,
+        exercises: tuple[dict[str, Any], ...],
+        config: dict[str, Any],
 ) -> str:
-    purpose = {
-        "technique": "Keep this technically clean and relaxed. Stop before form deteriorates.",
-        "easy": "Conversational effort, RPE 2-4. The purpose is aerobic volume, not proving fitness.",
-        "endurance": "Steady aerobic work, mostly RPE 3-5 with smooth technique.",
-        "quality": "Controlled quality. Hard repetitions are RPE 8-9; recoveries must be genuinely easy.",
-        "long": "Easy durable aerobic work. Fuel and hydrate; avoid turning the finish into a race.",
-        "brick": "Very easy transition run. Short stride and relaxed effort after the bike.",
-        "recovery": "Recovery only, RPE 1-2. Stop if symptoms, pain, or unusual fatigue appear.",
-    }.get(role, "Complete the session at a controlled effort.")
+    template = (config.get("strength_templates") or {}).get(template_name or "", {})
+    rounds = int(template.get("rounds", 3))
+    target_rpe = template.get("target_rpe", 7)
+    rest_seconds = int(template.get("rest_seconds", 90))
+    items = []
+    for exercise in exercises:
+        name = str(exercise.get("name", "Exercise"))
+        reps = str(exercise.get("reps", "controlled reps"))
+        items.append(f"{name}: {rounds} x {reps}")
+    exercise_text = "; ".join(items)
+    return (
+        f"Strength template {template_name or 'full body'}. {exercise_text}. "
+        f"Target RPE {target_rpe}/10, keep about 2-3 repetitions in reserve, "
+        f"and rest about {rest_seconds} seconds between demanding sets. "
+        "Use controlled technique; never train through sharp pain."
+    )
+
+
+def session_description(
+        sport: str,
+        role: str,
+        phase: str,
+        duration: int,
+        week_index: int,
+        *,
+        config: dict[str, Any] | None = None,
+        template_name: str | None = None,
+        exercises: tuple[dict[str, Any], ...] = (),
+) -> str:
+    if sport == "strength":
+        purpose = _strength_template_description(
+            template_name, exercises, config or DEFAULT_CONFIG
+        )
+    else:
+        purpose = {
+            "technique": "Keep this technically clean and relaxed. Stop before form deteriorates.",
+            "easy": "Conversational effort, RPE 2-4. The purpose is aerobic volume, not proving fitness.",
+            "endurance": "Steady aerobic work, mostly RPE 3-5 with smooth technique.",
+            "quality": "Controlled quality. Hard repetitions are RPE 8-9; recoveries must be genuinely easy.",
+            "long": "Easy durable aerobic work. Fuel and hydrate; avoid turning the finish into a race.",
+            "brick": "Very easy transition run. Short stride and relaxed effort after the bike.",
+            "recovery": "Recovery only, RPE 1-2. Stop if symptoms, pain, or unusual fatigue appear.",
+        }.get(role, "Complete the session at a controlled effort.")
     return (
         f"Adaptive year-base plan, week {week_index + 1}, phase {phase}. "
         f"Planned duration about {duration} minutes. {purpose} "
@@ -460,10 +590,10 @@ def session_description(
 
 
 def build_week_sessions(
-    config: dict[str, Any],
-    week_start: date,
-    plan_start: date,
-    base_minutes: int,
+        config: dict[str, Any],
+        week_start: date,
+        plan_start: date,
+        base_minutes: int,
 ) -> list[Session]:
     week_index = max(0, (week_start - monday_of(plan_start)).days // 7)
     plan = config["plan"]
@@ -478,10 +608,18 @@ def build_week_sessions(
 
     sport_multipliers = plan.get("sport_weight_multipliers") or {}
     adjusted_weights = [
-        float(slot["weight"]) * float(sport_multipliers.get(str(slot["sport"]), 1.0))
+        (
+            float(slot.get("weight", 1.0))
+            * float(sport_multipliers.get(str(slot["sport"]), 1.0))
+            if str(slot["sport"]) in ENDURANCE_SPORTS
+               and slot.get("fixed_minutes") is None
+            else 0.0
+        )
         for _, _, slot in flattened
     ]
     total_weight = sum(adjusted_weights)
+    if total_weight <= 0:
+        raise PlannerConfigError("At least one endurance session needs a positive weight.")
     sessions: list[Session] = []
     hard_count = 0
     hard_by_day: dict[str, int] = {}
@@ -492,12 +630,21 @@ def build_week_sessions(
     for (day_name, slot_index, slot), adjusted_weight in zip(flattened, adjusted_weights):
         sport = str(slot["sport"])
         role = str(slot.get("role", "easy"))
-        share = target * adjusted_weight / total_weight
-        duration = slot_duration(slot, share)
+        share = target * adjusted_weight / total_weight if adjusted_weight > 0 else 0
+        session_multiplier = float(sport_multipliers.get(sport, 1.0))
+        if sport == "strength":
+            session_multiplier *= clamp(
+                float(plan.get("coach_volume_multiplier", 1.0)), 0.85, 1.15
+            )
+            if recovery_week:
+                session_multiplier *= float(plan.get("recovery_week_factor", 0.72))
+        duration = slot_duration(slot, share, session_multiplier)
 
         # Recovery weeks retain frequency but remove systemic intensity.
         if recovery_week and role == "quality":
             role = "easy" if sport != "swim" else "technique"
+        elif recovery_week and sport == "strength":
+            role = "strength_maintenance"
 
         intensity = role_intensity(role)
         if intensity == "hard":
@@ -509,6 +656,11 @@ def build_week_sessions(
 
         day = week_start + timedelta(days=DAY_INDEX[day_name])
         key = f"{day.isoformat()}:{sport}:{role}:{slot_index}"
+        template_name = str(slot.get("template")) if slot.get("template") else None
+        template = (config.get("strength_templates") or {}).get(template_name or "", {})
+        strength_exercises = tuple(
+            item for item in (template.get("exercises") or []) if isinstance(item, dict)
+        )
         sessions.append(
             Session(
                 key=key,
@@ -520,7 +672,14 @@ def build_week_sessions(
                     prefix, week_index, sport, role, phase, duration
                 ),
                 description=session_description(
-                    sport, role, phase, duration, week_index
+                    sport,
+                    role,
+                    phase,
+                    duration,
+                    week_index,
+                    config=config,
+                    template_name=template_name,
+                    exercises=strength_exercises,
                 ),
                 intensity=intensity,
                 priority=int(slot.get("priority", 50)),
@@ -540,17 +699,19 @@ def build_week_sessions(
                     if slot.get("max_gap_minutes") is not None
                     else None
                 ),
+                strength_template=template_name,
+                strength_exercises=strength_exercises,
             )
         )
     return sessions
 
 
 def build_sessions_for_range(
-    config: dict[str, Any],
-    start_day: date,
-    end_day: date,
-    plan_start: date,
-    base_minutes: int,
+        config: dict[str, Any],
+        start_day: date,
+        end_day: date,
+        plan_start: date,
+        base_minutes: int,
 ) -> list[Session]:
     sessions: list[Session] = []
     week = monday_of(start_day)
@@ -572,10 +733,10 @@ def no_target() -> dict[str, Any]:
 
 
 def distance_step(
-    meters: float,
-    step_order: int,
-    step_type: int = StepType.INTERVAL,
-    step_key: str = "interval",
+        meters: float,
+        step_order: int,
+        step_type: int = StepType.INTERVAL,
+        step_key: str = "interval",
 ) -> ExecutableStep:
     return ExecutableStep(
         stepOrder=step_order,
@@ -627,7 +788,7 @@ def easy_time_steps(minutes: int) -> list[ExecutableStep | RepeatGroup]:
 
 
 def quality_time_steps(
-    sport: str, phase: str, minutes: int, progression_level: int = 0
+        sport: str, phase: str, minutes: int, progression_level: int = 0
 ) -> list[ExecutableStep | RepeatGroup]:
     total = max(40, minutes) * 60
     warmup = 12 * 60 if sport == "run" else 15 * 60
@@ -666,11 +827,11 @@ def swim_total_meters(config: dict[str, Any], minutes: int) -> int:
 
 
 def swim_steps(
-    config: dict[str, Any],
-    role: str,
-    phase: str,
-    minutes: int,
-    progression_level: int = 0,
+        config: dict[str, Any],
+        role: str,
+        phase: str,
+        minutes: int,
+        progression_level: int = 0,
 ) -> list[ExecutableStep | RepeatGroup]:
     pool = int(config["plan"].get("pool_length_m", 25))
     total = swim_total_meters(config, minutes)
@@ -723,7 +884,9 @@ def swim_steps(
 def workout_for_session(config: dict[str, Any], session: Session) -> Any:
     quality_progression = config.get("plan", {}).get("quality_progression") or {}
     progression_level = int(quality_progression.get(session.sport, 0))
-    if session.sport == "swim":
+    if session.sport == "strength":
+        steps = easy_time_steps(session.duration_minutes)
+    elif session.sport == "swim":
         steps = swim_steps(
             config,
             session.role,
@@ -748,16 +911,18 @@ def workout_for_session(config: dict[str, Any], session: Session) -> Any:
         "estimatedDurationInSecs": session.duration_minutes * 60,
         "workoutSegments": [segment],
         "description": (
-            session.description
-            + (f" Suggested start time: {session.scheduled_time}." if session.scheduled_time else "")
-            + (f" Complete after: {session.after}." if session.after else "")
+                session.description
+                + (f" Suggested start time: {session.scheduled_time}." if session.scheduled_time else "")
+                + (f" Complete after: {session.after}." if session.after else "")
         ),
     }
     if session.sport == "run":
         return RunningWorkout(**kwargs)
     if session.sport == "bike":
         return CyclingWorkout(**kwargs)
-    return SwimmingWorkout(**kwargs)
+    if session.sport == "swim":
+        return SwimmingWorkout(**kwargs)
+    return BaseWorkout(sportType=SPORT_TYPE["strength"], **kwargs)
 
 
 def first_positive_int(obj: Any, names: Iterable[str]) -> int | None:
@@ -821,14 +986,14 @@ class CalendarCache:
             if isinstance(node, dict):
                 text_values = [str(v) for v in node.values() if isinstance(v, str)]
                 if any(day.isoformat() in value for value in text_values) and any(
-                    key in node
-                    for key in (
-                        "workoutId",
-                        "scheduledWorkoutId",
-                        "workoutScheduleId",
-                        "workoutName",
-                        "title",
-                    )
+                        key in node
+                        for key in (
+                                "workoutId",
+                                "scheduledWorkoutId",
+                                "workoutScheduleId",
+                                "workoutName",
+                                "title",
+                        )
                 ):
                     found.append(node)
                 for value in node.values():
@@ -841,7 +1006,7 @@ class CalendarCache:
         return found
 
     def find(
-        self, day: date, workout_id: int | None = None, name: str | None = None
+            self, day: date, workout_id: int | None = None, name: str | None = None
     ) -> dict[str, Any] | None:
         for entry in self.entries(day):
             entry_workout_id = first_positive_int(entry, ("workoutId",))
@@ -863,12 +1028,12 @@ class CalendarCache:
 
 class AdaptivePlanner:
     def __init__(
-        self,
-        client: Garmin,
-        config: dict[str, Any],
-        data_dir: Path,
-        write_enabled: bool,
-        dry_run: bool,
+            self,
+            client: Garmin,
+            config: dict[str, Any],
+            data_dir: Path,
+            write_enabled: bool,
+            dry_run: bool,
     ) -> None:
         self.client = client
         self.data_dir = data_dir
@@ -900,7 +1065,7 @@ class AdaptivePlanner:
         }
 
     def _upload_and_schedule(
-        self, session: Session, record: dict[str, Any]
+            self, session: Session, record: dict[str, Any]
     ) -> dict[str, Any]:
         action = {
             "action": "create_and_schedule",
@@ -921,8 +1086,12 @@ class AdaptivePlanner:
             upload_response = self.client.upload_running_workout(workout)
         elif session.sport == "bike":
             upload_response = self.client.upload_cycling_workout(workout)
-        else:
+        elif session.sport == "swim":
             upload_response = self.client.upload_swimming_workout(workout)
+        else:
+            # python-garminconnect exposes a generic upload_workout endpoint and
+            # Garmin's workout type table defines strength_training as sport 5.
+            upload_response = self.client.upload_workout(workout.to_dict())
 
         workout_id = first_positive_int(upload_response, ("workoutId",))
         if workout_id is None and isinstance(upload_response, dict):
@@ -1036,7 +1205,7 @@ class AdaptivePlanner:
                 record = self.state["sessions"].get(session.key)
                 fingerprint = session.fingerprint()
                 if record and record.get("fingerprint") == fingerprint and record.get(
-                    "status"
+                        "status"
                 ) in {"scheduled", "adapted"}:
                     continue
                 if record and record.get("status") in {"scheduled", "adapted"}:
@@ -1111,16 +1280,21 @@ class AdaptivePlanner:
         return active
 
     def _replacement_session(
-        self,
-        original: Session,
-        status: str,
-        index: int,
+            self,
+            original: Session,
+            status: str,
+            index: int,
     ) -> Session:
         plan = self.config["plan"]
         if status == "AMBER":
             factor = float(plan.get("amber_duration_factor", 0.72))
             duration = max(20, round_to(original.duration_minutes * factor, 5))
-            role = "technique" if original.sport == "swim" else "easy"
+            if original.sport == "swim":
+                role = "technique"
+            elif original.sport == "strength":
+                role = "strength_maintenance"
+            else:
+                role = "easy"
         else:
             duration = int(plan.get("red_duration_minutes", 30))
             role = "recovery"
@@ -1134,22 +1308,25 @@ class AdaptivePlanner:
             duration_minutes=duration,
             name=f"[{prefix}] {status} {original.sport.title()} {role.title()} {duration}m"[:80],
             description=(
-                f"Recovery adaptation from {status} morning signals. "
-                f"Original session: {original.name}. "
-                + session_description(
-                    original.sport,
-                    role,
-                    original.phase,
-                    duration,
-                    original.week_index,
-                )
+                    f"Recovery adaptation from {status} morning signals. "
+                    f"Original session: {original.name}. "
+                    + session_description(
+                original.sport,
+                role,
+                original.phase,
+                duration,
+                original.week_index,
+                config=self.config,
+                template_name=original.strength_template,
+                exercises=original.strength_exercises,
+            )
             ),
             intensity="easy",
             slot_index=100 + index,
         )
 
     def adapt_today(
-        self, today: date, recovery_status: str, reasons: list[str]
+            self, today: date, recovery_status: str, reasons: list[str]
     ) -> dict[str, Any]:
         status = recovery_status.upper()
         previous = str(
@@ -1200,7 +1377,7 @@ class AdaptivePlanner:
             for index, record in enumerate(records):
                 original = Session(**record["session"])
                 if original.role == "brick" or (
-                    len(records) > 1 and not original.primary
+                        len(records) > 1 and not original.primary
                 ):
                     actions.append(
                         self._unschedule_record(record, "AMBER: remove secondary session")
@@ -1225,8 +1402,12 @@ class AdaptivePlanner:
                 preferred = preferred or next(
                     (s for s in originals if s.sport == "bike"), None
                 )
-                preferred = preferred or originals[0]
-                replacements.append(self._replacement_session(preferred, status, 0))
+                preferred = preferred or next(
+                    (s for s in originals if s.sport == "run"), None
+                )
+                # Do not replace an all-strength RED day with more strength.
+                if preferred is not None:
+                    replacements.append(self._replacement_session(preferred, status, 0))
 
         for replacement in replacements:
             record = self._session_record(replacement)
@@ -1260,7 +1441,7 @@ class AdaptivePlanner:
             session = record.get("session", {})
             raw_day = session.get("day")
             if raw_day and date.fromisoformat(raw_day) >= today and record.get(
-                "status"
+                    "status"
             ) in {"scheduled", "adapted", "planned"}:
                 future_records.append(record)
 

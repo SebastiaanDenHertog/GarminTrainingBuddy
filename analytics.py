@@ -47,7 +47,7 @@ class WeeklySummary:
     total_minutes: int = 0
     sessions: int = 0
     by_sport_minutes: dict[str, int] = field(
-        default_factory=lambda: {"run": 0, "bike": 0, "swim": 0}
+        default_factory=lambda: {"run": 0, "bike": 0, "swim": 0, "strength": 0}
     )
     hard_sessions: int = 0
     pain_reports: int = 0
@@ -96,7 +96,8 @@ class TrainingAnalysis:
     training_age_warning: str | None = None
 
 
-SPORT_KEYS = {"run": "run", "running": "run", "bike": "bike", "cycling": "bike", "swim": "swim", "swimming": "swim"}
+SPORT_KEYS = {"run": "run", "running": "run", "bike": "bike", "cycling": "bike", "swim": "swim", "swimming": "swim",
+              "strength": "strength", "strength_training": "strength"}
 
 
 def _structured_training_context(
@@ -168,10 +169,10 @@ def _nested(payload: Any, *paths: tuple[str, ...]) -> Any:
 
 def sport_from_activity(activity: dict[str, Any]) -> str | None:
     raw = (
-        _nested(activity, ("activityType", "typeKey"), ("sportType", "sportTypeKey"))
-        or activity.get("activityTypeKey")
-        or activity.get("sportType")
-        or ""
+            _nested(activity, ("activityType", "typeKey"), ("sportType", "sportTypeKey"))
+            or activity.get("activityTypeKey")
+            or activity.get("sportType")
+            or ""
     )
     text = str(raw).lower()
     if "run" in text or "treadmill" in text or "track" in text:
@@ -180,6 +181,8 @@ def sport_from_activity(activity: dict[str, Any]) -> str | None:
         return "bike"
     if "swim" in text:
         return "swim"
+    if "strength" in text or "weight" in text or "resistance" in text:
+        return "strength"
     return None
 
 
@@ -253,10 +256,10 @@ def sample_from_activity(payload: dict[str, Any]) -> ActivitySample | None:
 
 
 def fetch_activity_samples(
-    client: Any,
-    today: date,
-    days: int,
-    data_dir: Path,
+        client: Any,
+        today: date,
+        days: int,
+        data_dir: Path,
 ) -> list[ActivitySample]:
     start = today - timedelta(days=max(1, days) - 1)
     try:
@@ -299,15 +302,15 @@ def weekly_summaries(samples: list[ActivitySample]) -> list[WeeklySummary]:
         soreness_values: list[float] = []
         fatigue_values: list[float] = []
         motivation_values: list[float] = []
-        efficiency: dict[str, list[float]] = {"run": [], "bike": [], "swim": []}
+        efficiency: dict[str, list[float]] = {"run": [], "bike": [], "swim": [], "strength": []}
         for item in items:
             result.total_minutes += item.duration_minutes
             result.sessions += 1
             result.by_sport_minutes[item.sport] += item.duration_minutes
             if (
-                (item.aerobic_training_effect or 0) >= 3.5
-                or (item.anaerobic_training_effect or 0) >= 2.0
-                or (item.feedback.session_rpe or 0) >= 8
+                    (item.aerobic_training_effect or 0) >= 3.5
+                    or (item.anaerobic_training_effect or 0) >= 2.0
+                    or (item.feedback.session_rpe or 0) >= 8
             ):
                 result.hard_sessions += 1
             if item.feedback.pain_or_injury is True:
@@ -392,7 +395,7 @@ def _planned_records(state: dict[str, Any], start: date, end: date) -> list[dict
 
 
 def _match_compliance(
-    planned: list[dict[str, Any]], samples: list[ActivitySample]
+        planned: list[dict[str, Any]], samples: list[ActivitySample]
 ) -> tuple[int, dict[str, tuple[int, int]]]:
     by_key: dict[tuple[str, str], list[ActivitySample]] = {}
     for sample in samples:
@@ -401,7 +404,7 @@ def _match_compliance(
         values.sort(key=lambda item: item.duration_minutes, reverse=True)
 
     matched = 0
-    by_sport = {"run": [0, 0], "bike": [0, 0], "swim": [0, 0]}
+    by_sport = {"run": [0, 0], "bike": [0, 0], "swim": [0, 0], "strength": [0, 0]}
     for session in sorted(planned, key=lambda item: (item.get("day", ""), item.get("slot_index", 0))):
         sport = str(session.get("sport", ""))
         if sport not in by_sport:
@@ -455,9 +458,9 @@ def _read_recovery_reports(data_dir: Path, start: date, end: date) -> dict[str, 
         amber += status == "AMBER"
         metrics = payload.get("metrics") or {}
         for target, key in (
-            (readiness, "training_readiness"),
-            (sleep, "sleep_score"),
-            (hrv, "hrv_ratio"),
+                (readiness, "training_readiness"),
+                (sleep, "sleep_score"),
+                (hrv, "hrv_ratio"),
         ):
             value = _number(metrics.get(key))
             if value is not None:
@@ -472,11 +475,11 @@ def _read_recovery_reports(data_dir: Path, start: date, end: date) -> dict[str, 
 
 
 def build_training_analysis(
-    client: Any,
-    today: date,
-    data_dir: Path,
-    *,
-    days: int = 42,
+        client: Any,
+        today: date,
+        data_dir: Path,
+        *,
+        days: int = 42,
 ) -> TrainingAnalysis:
     samples = fetch_activity_samples(client, today, days, data_dir)
     start = today - timedelta(days=days - 1)
@@ -540,7 +543,7 @@ def build_training_analysis(
     )
     by_sport_minutes = {
         sport: sum(item.duration_minutes for item in samples if item.sport == sport)
-        for sport in ("run", "bike", "swim")
+        for sport in ("run", "bike", "swim", "strength")
     }
     summaries = weekly_summaries(samples)
     (

@@ -53,3 +53,9 @@ evidence:
     type: hard_safety_rule
     rule: "When trends conflict or uncertainty is high, keep the current plan unchanged."
     allowed_decisions: [hold]
+
+  - id: TRAINING_AGE_001
+    type: local_coaching_rule
+    rule: "Structured training age is background context, not proof of readiness. During the first eight weeks, cap positive volume progression at two percent and do not add interval intensity; after that, current Garmin performance, recovery, compliance and pain feedback remain decisive."
+    allowed_decisions: [hold, progress]
+
