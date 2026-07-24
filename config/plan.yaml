@@ -26,7 +26,7 @@ plan:
   block_growth: 0.055
   recovery_week_factor: 0.75
 
-  max_sessions_per_day: 2
+  max_sessions_per_day: 3
   max_hard_sessions_per_day: 1
   max_hard_sessions_per_week: 2
   max_strength_sessions_per_week: 2
