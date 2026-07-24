@@ -51,7 +51,7 @@ def _session_source(data_dir: Path, report: dict[str, Any] | None) -> list[dict[
 
 
 def _upcoming_sessions(
-    sessions: list[dict[str, Any]], today: date, days: int = 21
+    sessions: list[dict[str, Any]], today: date, days: int = 14
 ) -> list[dict[str, Any]]:
     end = today + timedelta(days=max(1, days) - 1)
     result: list[dict[str, Any]] = []
@@ -75,6 +75,9 @@ def _upcoming_sessions(
                 "primary": bool(item.get("primary", True)),
                 "strength_template": item.get("strength_template"),
                 "strength_exercises": item.get("strength_exercises") or [],
+                "benchmark_id": item.get("benchmark_id"),
+                "target_summary": item.get("target_summary"),
+                "target_source": item.get("target_source"),
             }
         )
     return sorted(
@@ -162,13 +165,46 @@ def build_dashboard_payload() -> dict[str, Any]:
     except Exception as exc:  # dashboard must remain available if AI checks fail
         ai_ram = {"error": str(exc), "enough_ram": False, "load_allowed": False}
 
+    try:
+        from training_db import summary as measurement_database_summary
+
+        db_summary = measurement_database_summary(data_dir)
+    except Exception as exc:
+        db_summary = {
+            "enabled": os.getenv("TRAINING_DB_ENABLED", "true").lower()
+            in {"1", "true", "yes", "on"},
+            "initialized": False,
+            "error": str(exc),
+        }
+
+    analysis_payload = analysis or {}
+    measurement = {
+        "database": (
+            db_summary
+            if db_summary.get("initialized")
+            else (analysis_payload.get("database") or db_summary)
+        ),
+        "matching": {
+            "planned": analysis_payload.get("planned_sessions", 0),
+            "matched": analysis_payload.get("matched_sessions", 0),
+            "compliance": analysis_payload.get("compliance"),
+            "quality": analysis_payload.get("match_quality") or {},
+            "unmatched_planned": analysis_payload.get("unmatched_planned_sessions", 0),
+            "unmatched_activities": analysis_payload.get("unmatched_activities", 0),
+        },
+        "performance_trends": analysis_payload.get("performance_trends") or {},
+        "recovery_trend": analysis_payload.get("recovery_trend") or {},
+        "benchmarks": analysis_payload.get("benchmark_status") or [],
+    }
+
     return {
         "generated_at": datetime.now().astimezone().isoformat(),
         "today": today.isoformat(),
         "recovery": _status_from_report(report),
         "next_7_days": _next_seven_day_totals(upcoming, today),
         "upcoming_sessions": upcoming,
-        "analysis": analysis or {},
+        "analysis": analysis_payload,
+        "measurement": measurement,
         "coach": _coach_summary(proposal),
         "ai": {
             "enabled": os.getenv("AI_ENABLED", "false").lower() in {"1", "true", "yes", "on"},
@@ -182,6 +218,8 @@ def build_dashboard_payload() -> dict[str, Any]:
             in {"1", "true", "yes", "on"},
             "dry_run": os.getenv("DRY_RUN", "true").lower()
             in {"1", "true", "yes", "on"},
+            "publication": ((report or {}).get("plan") or {}).get("publication"),
+            "resolved_targets": ((report or {}).get("plan") or {}).get("resolved_targets") or {},
         },
         "sources": {
             "report": str(report_path) if report_path else None,

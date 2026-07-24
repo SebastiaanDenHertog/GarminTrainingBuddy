@@ -93,3 +93,27 @@ footer { color: var(--muted); margin-top: 22px; font-size: .85rem; text-align: c
   .workout { grid-template-columns: 60px 1fr; }
   .duration { grid-column: 2; color: var(--muted); font-weight: 600; }
 }
+.section-note { margin: -8px 0 0; max-width: 760px; line-height: 1.45; }
+.trend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.trend-card { border: 1px solid var(--border); border-radius: 14px; padding: 16px; background: var(--bg); }
+.sport-title { text-transform: capitalize; }
+.trend-value { font-size: 1.8rem; font-weight: 800; margin-top: 16px; font-variant-numeric: tabular-nums; }
+.mini-facts { margin: 16px 0 0; display: grid; gap: 8px; }
+.mini-facts div { display: flex; justify-content: space-between; gap: 12px; font-size: .88rem; }
+.mini-facts dd { text-align: right; }
+.benchmark-list { display: grid; gap: 0; }
+.benchmark-row { display: flex; justify-content: space-between; gap: 18px; padding: 12px 0; border-top: 1px solid var(--border); }
+.benchmark-row:first-child { border-top: 0; padding-top: 0; }
+.benchmark-row strong, .benchmark-row small { display: block; }
+.benchmark-row small { margin-top: 4px; }
+.benchmark-result { text-align: right; }
+.path-value { max-width: 250px; overflow-wrap: anywhere; font-size: .82rem; }
+@media (max-width: 800px) {
+  .trend-grid { grid-template-columns: 1fr; }
+}
+.review-list { display: grid; gap: 0; margin-top: 14px; }
+.review-row { display: flex; justify-content: space-between; gap: 18px; padding: 11px 0; border-top: 1px solid var(--border); }
+.review-row:first-child { border-top: 0; padding-top: 0; }
+.review-row strong, .review-row small { display: block; }
+.review-row small { margin-top: 4px; }
+.review-score { text-align: right; white-space: nowrap; }

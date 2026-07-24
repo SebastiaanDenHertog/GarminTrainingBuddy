@@ -816,6 +816,7 @@ def run_weekly_review(
         today,
         data_dir,
         days=int(os.getenv("ANALYSIS_DAYS", "42")),
+        config=config,
     )
     analysis_path = save_analysis(analysis, data_dir)
     evidence_path = os.getenv("EVIDENCE_CONFIG", "/config/evidence.yaml")

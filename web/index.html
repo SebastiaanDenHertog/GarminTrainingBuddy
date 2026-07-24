@@ -10,8 +10,8 @@
   <main class="shell">
     <header class="topbar">
       <div>
-        <p class="eyebrow">Garmin adaptive training</p>
-        <h1>Triathlon + strength dashboard</h1>
+        <p class="eyebrow">Garmin adaptive training · V5 Phase 1</p>
+        <h1>Ironman measurement dashboard</h1>
         <p id="updated" class="muted">Loading local training data…</p>
       </div>
       <button id="refresh" type="button">Refresh</button>
@@ -22,7 +22,7 @@
     <section class="metrics" aria-label="Current training status">
       <article class="metric"><span>Recovery</span><strong id="recovery-status">—</strong><small id="recovery-day">No report yet</small></article>
       <article class="metric"><span>Readiness</span><strong id="readiness">—</strong><small id="readiness-level">Garmin</small></article>
-      <article class="metric"><span>Sleep score</span><strong id="sleep-score">—</strong><small id="sleep-hours">— hours</small></article>
+      <article class="metric"><span>Plan match</span><strong id="match-rate">—</strong><small id="match-detail">No measurement sync</small></article>
       <article class="metric"><span>Next 7 days</span><strong id="weekly-total">—</strong><small id="weekly-endurance">— endurance</small></article>
     </section>
 
@@ -32,10 +32,52 @@
         <p id="recommendation" class="lead">Run the advisor to generate the first recovery report.</p>
         <ul id="reasons" class="reasons"></ul>
         <dl class="facts compact recovery-facts">
+          <div><dt>Sleep</dt><dd id="sleep-summary">—</dd></div>
           <div><dt>HRV vs weekly average</dt><dd id="hrv-ratio">—</dd></div>
           <div><dt>Resting HR difference</dt><dd id="rhr-delta">—</dd></div>
           <div><dt>Recent Garmin feedback</dt><dd id="feedback-summary">No feedback</dd></div>
         </dl>
+      </article>
+
+      <article class="panel">
+        <div class="section-title"><h2>Measurement database</h2><span id="db-chip" class="chip">WAITING</span></div>
+        <dl class="facts">
+          <div><dt>Activities stored</dt><dd id="db-activities">—</dd></div>
+          <div><dt>Planned sessions stored</dt><dd id="db-planned">—</dd></div>
+          <div><dt>High-confidence matches</dt><dd id="match-quality">—</dd></div>
+          <div><dt>Recovery trend</dt><dd id="recovery-trend">—</dd></div>
+          <div><dt>Database file</dt><dd id="db-path" class="path-value">—</dd></div>
+        </dl>
+      </article>
+    </section>
+
+    <section class="panel">
+      <div class="section-title">
+        <div>
+          <h2>Per-sport performance trends</h2>
+          <p class="muted section-note">Recent 14 days compared with the preceding 14 days. Measurement only; these signals do not directly change Garmin yet.</p>
+        </div>
+      </div>
+      <div id="trend-cards" class="trend-grid"></div>
+    </section>
+
+    <section class="grid two">
+      <article class="panel">
+        <h2>Matching review</h2>
+        <p class="muted section-note">Medium- and low-confidence links that are worth checking.</p>
+        <div id="match-review" class="review-list"></div>
+      </article>
+      <article class="panel">
+        <h2>Unmatched planned sessions</h2>
+        <p class="muted section-note">A missed workout, a moved activity, or a Garmin activity that could not be linked confidently.</p>
+        <div id="unmatched-review" class="review-list"></div>
+      </article>
+    </section>
+
+    <section class="grid two">
+      <article class="panel">
+        <div class="section-title"><h2>Personal benchmarks</h2><span id="benchmark-chip" class="chip">OFF</span></div>
+        <div id="benchmarks" class="benchmark-list"></div>
       </article>
 
       <article class="panel">
@@ -50,7 +92,7 @@
     </section>
 
     <section class="panel">
-      <div class="section-title"><h2>Next 21 days</h2><div id="sport-totals" class="chips"></div></div>
+      <div class="section-title"><h2>Next 14 days</h2><div id="sport-totals" class="chips"></div></div>
       <div id="schedule" class="schedule"></div>
     </section>
 
@@ -66,7 +108,7 @@
     </section>
 
     <footer>
-      Read-only dashboard. Training changes still pass through the Python validator before Garmin is updated.
+      Read-only dashboard. Phase 1 measures and validates first; training changes still pass through the deterministic safety validator.
     </footer>
   </main>
   <script src="/assets/app.js" defer></script>

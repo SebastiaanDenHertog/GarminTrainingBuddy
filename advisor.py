@@ -509,6 +509,31 @@ def run_once() -> int:
     json_path, md_path = write_report(
         metrics, advice, plan_result, adaptation, coach_review
     )
+    measurement_result: dict[str, Any] | None = None
+    if coach_review and coach_review.get("analysis_file"):
+        measurement_result = {
+            "status": "updated_by_weekly_review",
+            "file": coach_review.get("analysis_file"),
+        }
+    elif env_bool("MEASUREMENT_SYNC_ON_DAILY", True):
+        try:
+            analysis = build_training_analysis(
+                client,
+                today,
+                data_dir,
+                days=int(os.getenv("MEASUREMENT_DAILY_SYNC_DAYS", "42")),
+                config=config,
+            )
+            analysis_path = save_analysis(analysis, data_dir)
+            measurement_result = {
+                "status": "updated",
+                "file": str(analysis_path),
+                "database": analysis.database,
+                "match_quality": analysis.match_quality,
+            }
+        except Exception as exc:
+            LOG.warning("Measurement sync failed; the daily plan remains valid: %s", exc)
+            measurement_result = {"status": "failed", "error": str(exc)}
     print(
         json.dumps(
             {
@@ -518,6 +543,7 @@ def run_once() -> int:
                 "coach_review": coach_review,
                 "adaptation": adaptation,
                 "plan_actions": plan_result.get("actions", []),
+                "measurement": measurement_result,
                 "report": str(md_path),
                 "raw_report": str(json_path),
             },
@@ -533,7 +559,7 @@ def run_plan(rebuild: bool = False) -> int:
     today = datetime.now(tz).date()
     client = build_client(False)
     planner = planner_from_env(client)
-    result = planner.rebuild(today) if rebuild else planner.ensure_horizon(today)
+    result = planner.rebuild(today) if rebuild else planner.ensure_horizon(today, force_publish=True)
     print(json.dumps(result, indent=2, default=str))
     return 0
 
@@ -547,16 +573,41 @@ def run_status() -> int:
     return 0
 
 
-def run_analysis() -> int:
+def run_analysis(*, measurement_sync: bool = False) -> int:
     tz = ZoneInfo(os.getenv("TZ", "Pacific/Auckland"))
     today = datetime.now(tz).date()
     data_dir = Path(os.getenv("DATA_DIR", "/data"))
     client = build_client(False)
+    config = load_plan_config(os.getenv("PLAN_CONFIG", "/config/plan.yaml"))
+    measurement = config.get("measurement") or {}
+    default_days = int(measurement.get("history_days", 180)) if measurement_sync else int(
+        os.getenv("ANALYSIS_DAYS", "42"))
+    days = int(os.getenv("MEASUREMENT_HISTORY_DAYS", str(default_days))) if measurement_sync else default_days
     analysis = build_training_analysis(
-        client, today, data_dir, days=int(os.getenv("ANALYSIS_DAYS", "42"))
+        client, today, data_dir, days=days, config=config
     )
     path = save_analysis(analysis, data_dir)
-    print(json.dumps({"analysis": asdict(analysis), "file": str(path)}, indent=2, default=str))
+    output: dict[str, Any] = {
+        "mode": "measurement_sync" if measurement_sync else "analysis",
+        "file": str(path),
+    }
+    if measurement_sync:
+        output["summary"] = {
+            "period_start": analysis.period_start,
+            "period_end": analysis.period_end,
+            "activity_count": analysis.activity_count,
+            "planned_sessions": analysis.planned_sessions,
+            "matched_sessions": analysis.matched_sessions,
+            "compliance": analysis.compliance,
+            "match_quality": analysis.match_quality,
+            "performance_trends": analysis.performance_trends,
+            "recovery_trend": analysis.recovery_trend,
+            "database": analysis.database,
+            "benchmark_status": analysis.benchmark_status,
+        }
+    else:
+        output["analysis"] = asdict(analysis)
+    print(json.dumps(output, indent=2, default=str))
     return 0
 
 
@@ -577,6 +628,16 @@ def run_ai_check() -> int:
     payload = ram_check_payload()
     print(json.dumps(payload, indent=2, default=str))
     return 0 if payload.get("enough_ram") else 2
+
+
+def run_targets() -> int:
+    from targets import resolve_training_targets
+
+    data_dir = Path(os.getenv("DATA_DIR", "/data"))
+    config = load_plan_config(os.getenv("PLAN_CONFIG", "/config/plan.yaml"))
+    payload = resolve_training_targets(config, data_dir)
+    print(json.dumps(payload, indent=2, default=str))
+    return 0
 
 
 def run_daemon() -> int:
@@ -610,8 +671,10 @@ def main() -> int:
             "rebuild",
             "status",
             "analyze",
+            "measure",
             "coach",
             "feedback-help",
+            "targets",
             "ai-check",
             "daemon",
         ),
@@ -631,11 +694,15 @@ def main() -> int:
         return run_status()
     if args.command == "analyze":
         return run_analysis()
+    if args.command == "measure":
+        return run_analysis(measurement_sync=True)
     if args.command == "coach":
         return run_coach_review(True)
     if args.command == "feedback-help":
         print(feedback_format_help())
         return 0
+    if args.command == "targets":
+        return run_targets()
     if args.command == "ai-check":
         return run_ai_check()
     return run_daemon()

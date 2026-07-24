@@ -14,6 +14,8 @@ import yaml
 from garminconnect import Garmin
 
 from coach import apply_adjustment_to_config
+from benchmarks import apply_due_benchmark
+from targets import annotate_sessions, resolve_training_targets
 from garminconnect.workout import (
     BaseWorkout,
     ConditionType,
@@ -97,6 +99,13 @@ class Session:
     max_gap_minutes: int | None = None
     strength_template: str | None = None
     strength_exercises: tuple[dict[str, Any], ...] = ()
+    benchmark_id: str | None = None
+    target_kind: str | None = None
+    target_low: float | None = None
+    target_high: float | None = None
+    target_unit: str | None = None
+    target_summary: str | None = None
+    target_source: str | None = None
 
     def fingerprint(self) -> str:
         payload = asdict(self)
@@ -130,8 +139,11 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "plan": {
-        "name_prefix": "BASE",
-        "horizon_days": 21,
+        "name_prefix": "AI BASE",
+        "horizon_days": 14,
+        "publish_weekday": "sunday",
+        "publish_weeks": 2,
+        "publish_bootstrap_when_empty": True,
         "plan_length_weeks": 52,
         "base_weekly_minutes": 360,
         "min_weekly_minutes": 240,
@@ -156,6 +168,83 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "red_duration_minutes": 30,
         "pool_length_m": 25,
         "swim_meters_per_hour": 2200,
+    },
+    "workout_targets": {
+        "enabled": True,
+        "benchmark_conversions": {
+            "minimum_confidence": 0.65,
+            "run_20min_to_threshold_pace_factor": 1.03,
+            "bike_20min_to_ftp_factor": 0.95,
+        },
+        "manual": {
+            "run_threshold_pace": None,
+            "run_threshold_hr_bpm": None,
+            "bike_ftp_watts": None,
+            "bike_threshold_hr_bpm": None,
+            "swim_css_pace": None,
+        },
+        "ranges": {
+            "run_recovery": {
+                "hr_pct_lthr": [0.70, 0.80],
+                "pace_multiplier": [1.28, 1.48],
+            },
+            "run_easy": {
+                "hr_pct_lthr": [0.75, 0.85],
+                "pace_multiplier": [1.20, 1.40],
+            },
+            "run_brick": {
+                "hr_pct_lthr": [0.76, 0.86],
+                "pace_multiplier": [1.18, 1.38],
+            },
+            "run_long": {
+                "hr_pct_lthr": [0.78, 0.88],
+                "pace_multiplier": [1.15, 1.35],
+            },
+            "run_quality": {
+                "foundation": {
+                    "pace_multiplier": [0.94, 1.02],
+                    "hr_pct_lthr": [0.90, 0.98],
+                },
+                "aerobic_build": {
+                    "pace_multiplier": [0.98, 1.04],
+                    "hr_pct_lthr": [0.94, 1.00],
+                },
+                "vo2_economy": {
+                    "pace_multiplier": [0.88, 0.95],
+                    "hr_pct_lthr": [0.95, 1.02],
+                },
+                "durability": {
+                    "pace_multiplier": [0.97, 1.02],
+                    "hr_pct_lthr": [0.90, 0.97],
+                },
+            },
+            "bike_easy": {
+                "hr_pct_lthr": [0.72, 0.84],
+                "ftp_pct": [0.55, 0.72],
+            },
+            "bike_long": {
+                "hr_pct_lthr": [0.75, 0.87],
+                "ftp_pct": [0.60, 0.76],
+            },
+            "bike_quality": {
+                "foundation": {
+                    "ftp_pct": [0.88, 1.00],
+                    "hr_pct_lthr": [0.88, 0.97],
+                },
+                "aerobic_build": {
+                    "ftp_pct": [0.95, 1.02],
+                    "hr_pct_lthr": [0.92, 1.00],
+                },
+                "vo2_economy": {
+                    "ftp_pct": [1.06, 1.18],
+                    "hr_pct_lthr": [0.95, 1.02],
+                },
+                "durability": {
+                    "ftp_pct": [0.88, 0.96],
+                    "hr_pct_lthr": [0.88, 0.96],
+                },
+            },
+        },
     },
     "strength_templates": {
         "full_body_a": {
@@ -183,6 +272,37 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 {"name": "Bent-knee soleus raise", "reps": "12-15"},
                 {"name": "Side plank", "reps": "30-45 seconds each side"},
             ],
+        },
+    },
+    "measurement": {
+        "history_days": 180,
+        "match_day_tolerance": 1,
+        "minimum_match_score": 55,
+        "benchmarks": {
+            "enabled": False,
+            "auto_schedule": False,
+            "interval_weeks": 8,
+            "first_test_week": 2,
+            "sports": {
+                "run": {
+                    "protocol": "run_aerobic_30",
+                    "offset_weeks": 0,
+                    "preferred_weekday": "thursday",
+                    "replace_roles": ["quality", "easy"],
+                },
+                "bike": {
+                    "protocol": "bike_aerobic_45",
+                    "offset_weeks": 2,
+                    "preferred_weekday": "tuesday",
+                    "replace_roles": ["quality", "endurance", "easy"],
+                },
+                "swim": {
+                    "protocol": "swim_css_400_200",
+                    "offset_weeks": 3,
+                    "preferred_weekday": "friday",
+                    "replace_roles": ["quality", "endurance"],
+                },
+            },
         },
     },
     "training_days": {
@@ -219,6 +339,25 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 
+def _apply_publication_env_overrides(config: dict[str, Any]) -> None:
+    plan = config.setdefault("plan", {})
+    weekday = os.getenv("PLAN_PUBLISH_WEEKDAY")
+    weeks = os.getenv("PLAN_PUBLISH_WEEKS")
+    bootstrap = os.getenv("PLAN_PUBLISH_BOOTSTRAP_WHEN_EMPTY")
+    if weekday not in (None, ""):
+        plan["publish_weekday"] = weekday.strip().lower()
+    if weeks not in (None, ""):
+        try:
+            plan["publish_weeks"] = int(weeks)
+        except ValueError as exc:
+            raise PlannerConfigError("PLAN_PUBLISH_WEEKS must be an integer.") from exc
+    if bootstrap not in (None, ""):
+        plan["publish_bootstrap_when_empty"] = bootstrap.strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+    plan["horizon_days"] = max(1, int(plan.get("publish_weeks", 2))) * 7
+
+
 def load_plan_config(path: str | Path) -> dict[str, Any]:
     config_path = Path(path)
     if not config_path.exists():
@@ -227,6 +366,7 @@ def load_plan_config(path: str | Path) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise PlannerConfigError("The YAML root must be a mapping.")
     config = deep_merge(DEFAULT_CONFIG, raw)
+    _apply_publication_env_overrides(config)
     validate_config(config)
     return config
 
@@ -249,6 +389,14 @@ def validate_config(config: dict[str, Any]) -> None:
 
     if int(plan["min_weekly_minutes"]) > int(plan["max_weekly_minutes"]):
         raise PlannerConfigError("min_weekly_minutes cannot exceed max_weekly_minutes.")
+
+    if int(plan.get("publish_weeks", 0)) <= 0:
+        raise PlannerConfigError("plan.publish_weeks must be greater than zero.")
+    publish_weekday = str(plan.get("publish_weekday", "sunday")).strip().lower()
+    if publish_weekday not in set(DAY_INDEX) | {"daily", "everyday"}:
+        raise PlannerConfigError(
+            "plan.publish_weekday must be a weekday name, 'daily', or 'everyday'."
+        )
 
     session_count = 0
     for day_name, slots in days.items():
@@ -321,6 +469,30 @@ def validate_config(config: dict[str, Any]) -> None:
             f"Configured {strength_count} strength sessions, above "
             f"max_strength_sessions_per_week={max_strength}."
         )
+    measurement = config.get("measurement") or {}
+    if not isinstance(measurement, dict):
+        raise PlannerConfigError("measurement must be a mapping.")
+    benchmarks = measurement.get("benchmarks") or {}
+    if benchmarks and not isinstance(benchmarks, dict):
+        raise PlannerConfigError("measurement.benchmarks must be a mapping.")
+    if benchmarks:
+        interval = int(benchmarks.get("interval_weeks", 8))
+        if interval < 4:
+            raise PlannerConfigError("measurement.benchmarks.interval_weeks must be at least 4.")
+        sports = benchmarks.get("sports") or {}
+        if not isinstance(sports, dict):
+            raise PlannerConfigError("measurement.benchmarks.sports must be a mapping.")
+        for sport, item in sports.items():
+            if sport not in ENDURANCE_SPORTS or not isinstance(item, dict):
+                raise PlannerConfigError(
+                    "Benchmark sports must be run, bike, or swim mappings."
+                )
+            preferred = item.get("preferred_weekday")
+            if preferred and str(preferred).lower() not in DAY_INDEX:
+                raise PlannerConfigError(
+                    f"Unknown benchmark preferred weekday: {preferred}"
+                )
+
     if session_count < 3:
         raise PlannerConfigError("Configure at least three weekly sessions.")
 
@@ -718,7 +890,13 @@ def build_week_sessions(
                 strength_exercises=strength_exercises,
             )
         )
-    return sessions
+    benchmark_sessions = apply_due_benchmark(
+        config,
+        sessions,
+        week_index=week_index,
+        recovery_week=recovery_week,
+    )
+    return annotate_sessions(config, benchmark_sessions)
 
 
 def build_sessions_for_range(
@@ -790,20 +968,85 @@ def rest_step(seconds: float, step_order: int) -> ExecutableStep:
     )
 
 
-def easy_time_steps(minutes: int) -> list[ExecutableStep | RepeatGroup]:
+def session_target(session: Session) -> dict[str, Any] | None:
+    if (
+            not session.target_kind
+            or session.target_kind == "description_only"
+            or session.target_low is None
+            or session.target_high is None
+    ):
+        return None
+    mapping = {
+        "heart_rate": (
+            TargetType.HEART_RATE_ZONE,
+            "heart.rate.zone",
+            4,
+        ),
+        "pace": (TargetType.PACE_ZONE, "pace.zone", 6),
+        "power": (TargetType.POWER_ZONE, "power.zone", 2),
+    }
+    if session.target_kind not in mapping:
+        return None
+    target_id, target_key, display_order = mapping[session.target_kind]
+    return {
+        "targetType": {
+            "workoutTargetTypeId": target_id,
+            "workoutTargetTypeKey": target_key,
+            "displayOrder": display_order,
+        },
+        "targetValueOne": float(min(session.target_low, session.target_high)),
+        "targetValueTwo": float(max(session.target_low, session.target_high)),
+    }
+
+
+def time_step(
+        duration_seconds: float,
+        step_order: int,
+        step_type: int,
+        step_key: str,
+        target: dict[str, Any] | None = None,
+) -> ExecutableStep:
+    kwargs: dict[str, Any] = {
+        "stepOrder": step_order,
+        "stepType": {
+            "stepTypeId": step_type,
+            "stepTypeKey": step_key,
+            "displayOrder": step_type,
+        },
+        "endCondition": {
+            "conditionTypeId": ConditionType.TIME,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": True,
+        },
+        "endConditionValue": float(duration_seconds),
+        "targetType": no_target(),
+    }
+    if target:
+        kwargs.update(target)
+    return ExecutableStep(**kwargs)
+
+
+def easy_time_steps(
+        minutes: int, target: dict[str, Any] | None = None
+) -> list[ExecutableStep | RepeatGroup]:
     total = max(15, minutes * 60)
     warmup = min(600, max(300, total * 0.15))
     cooldown = min(600, max(300, total * 0.12))
     main = max(300, total - warmup - cooldown)
     return [
         create_warmup_step(float(warmup), step_order=1),
-        create_interval_step(float(main), step_order=2),
+        time_step(float(main), 2, StepType.INTERVAL, "interval", target),
         create_cooldown_step(float(cooldown), step_order=3),
     ]
 
 
 def quality_time_steps(
-        sport: str, phase: str, minutes: int, progression_level: int = 0
+        sport: str,
+        phase: str,
+        minutes: int,
+        progression_level: int = 0,
+        target: dict[str, Any] | None = None,
 ) -> list[ExecutableStep | RepeatGroup]:
     total = max(40, minutes) * 60
     warmup = 12 * 60 if sport == "run" else 15 * 60
@@ -822,9 +1065,8 @@ def quality_time_steps(
     reps = max(2, reps + progression_level)
     interval_block = reps * (hard + recovery)
     if warmup + cooldown + interval_block > total:
-        # Scale repetitions down before truncating warmup/cooldown.
         reps = max(2, int((total - warmup - cooldown) // (hard + recovery)))
-    hard_step = create_interval_step(float(hard), step_order=1)
+    hard_step = time_step(float(hard), 1, StepType.INTERVAL, "interval", target)
     recover_step = create_recovery_step(float(recovery), step_order=2)
     repeat = create_repeat_group(reps, [hard_step, recover_step], step_order=2)
     return [
@@ -896,10 +1138,78 @@ def swim_steps(
     return steps
 
 
+def benchmark_time_steps(session: Session) -> list[ExecutableStep | RepeatGroup]:
+    protocol = session.benchmark_id
+    if protocol == "run_aerobic_30":
+        return [
+            create_warmup_step(10 * 60.0, step_order=1),
+            create_interval_step(30 * 60.0, step_order=2),
+            create_cooldown_step(10 * 60.0, step_order=3),
+        ]
+    if protocol == "run_threshold_20":
+        strides = create_repeat_group(
+            4,
+            [
+                create_interval_step(20.0, step_order=1),
+                create_recovery_step(40.0, step_order=2),
+            ],
+            step_order=2,
+        )
+        return [
+            create_warmup_step(15 * 60.0, step_order=1),
+            strides,
+            create_recovery_step(3 * 60.0, step_order=3),
+            create_interval_step(20 * 60.0, step_order=4),
+            create_cooldown_step(10 * 60.0, step_order=5),
+        ]
+    if protocol == "bike_aerobic_45":
+        return [
+            create_warmup_step(15 * 60.0, step_order=1),
+            create_interval_step(45 * 60.0, step_order=2),
+            create_cooldown_step(10 * 60.0, step_order=3),
+        ]
+    if protocol == "bike_threshold_20":
+        return [
+            create_warmup_step(20 * 60.0, step_order=1),
+            create_interval_step(3 * 60.0, step_order=2),
+            create_recovery_step(5 * 60.0, step_order=3),
+            create_interval_step(20 * 60.0, step_order=4),
+            create_cooldown_step(10 * 60.0, step_order=5),
+        ]
+    return easy_time_steps(session.duration_minutes)
+
+
+def benchmark_swim_steps(
+        config: dict[str, Any], session: Session
+) -> list[ExecutableStep | RepeatGroup]:
+    pool = int(config["plan"].get("pool_length_m", 25))
+    long_distance = max(pool * 8, round(400 / pool) * pool)
+    short_distance = max(pool * 4, round(200 / pool) * pool)
+    warmup = max(pool * 8, round(300 / pool) * pool)
+    cooldown = max(pool * 4, round(200 / pool) * pool)
+    return [
+        distance_step(warmup, 1, StepType.WARMUP, "warmup"),
+        create_repeat_group(
+            4,
+            [distance_step(pool * 2, 1), rest_step(20, 2)],
+            step_order=2,
+        ),
+        distance_step(long_distance, 3, StepType.INTERVAL, "long benchmark effort"),
+        rest_step(5 * 60, 4),
+        distance_step(short_distance, 5, StepType.INTERVAL, "short benchmark effort"),
+        distance_step(cooldown, 6, StepType.COOLDOWN, "cooldown"),
+    ]
+
+
 def workout_for_session(config: dict[str, Any], session: Session) -> Any:
     quality_progression = config.get("plan", {}).get("quality_progression") or {}
     progression_level = int(quality_progression.get(session.sport, 0))
-    if session.sport == "strength":
+    target = session_target(session)
+    if session.benchmark_id and session.sport == "swim":
+        steps = benchmark_swim_steps(config, session)
+    elif session.benchmark_id:
+        steps = benchmark_time_steps(session)
+    elif session.sport == "strength":
         steps = easy_time_steps(session.duration_minutes)
     elif session.sport == "swim":
         steps = swim_steps(
@@ -911,10 +1221,14 @@ def workout_for_session(config: dict[str, Any], session: Session) -> Any:
         )
     elif session.role == "quality":
         steps = quality_time_steps(
-            session.sport, session.phase, session.duration_minutes, progression_level
+            session.sport,
+            session.phase,
+            session.duration_minutes,
+            progression_level,
+            target,
         )
     else:
-        steps = easy_time_steps(session.duration_minutes)
+        steps = easy_time_steps(session.duration_minutes, target)
 
     segment = WorkoutSegment(
         segmentOrder=1,
@@ -981,6 +1295,12 @@ def save_state(path: Path, state: dict[str, Any]) -> None:
     temp = path.with_suffix(".tmp")
     temp.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8")
     temp.replace(path)
+    try:
+        from training_db import sync_planner_state
+
+        sync_planner_state(path.parent, state)
+    except Exception as exc:
+        LOG.warning("Could not sync planner state to the measurement database: %s", exc)
 
 
 class CalendarCache:
@@ -1053,6 +1373,9 @@ class AdaptivePlanner:
         self.client = client
         self.data_dir = data_dir
         self.config = apply_adjustment_to_config(config, data_dir)
+        self.config["_resolved_targets"] = resolve_training_targets(
+            self.config, data_dir
+        )
         self.state_path = data_dir / "planner_state.json"
         self.state = load_state(self.state_path)
         self.write_enabled = write_enabled
@@ -1089,6 +1412,8 @@ class AdaptivePlanner:
             "name": session.name,
             "sport": session.sport,
             "duration_minutes": session.duration_minutes,
+            "target": session.target_summary,
+            "target_source": session.target_source,
             "write_enabled": self.write_enabled,
             "dry_run": self.dry_run,
             "status": "preview",
@@ -1263,7 +1588,61 @@ class AdaptivePlanner:
             record["cancelled_at"] = datetime.now().astimezone().isoformat()
         return action
 
-    def ensure_horizon(self, today: date) -> dict[str, Any]:
+    def _publish_is_due(self, today: date) -> bool:
+        configured = str(
+            self.config["plan"].get("publish_weekday", "sunday")
+        ).strip().lower()
+        return configured in {"daily", "everyday"} or today.strftime("%A").lower() == configured
+
+    def _has_active_future_sessions(self, today: date) -> bool:
+        for record in self.state["sessions"].values():
+            session = record.get("session", {})
+            raw_day = session.get("day")
+            if not raw_day or record.get("status") not in {"planned", "scheduled", "adapted"}:
+                continue
+            try:
+                if date.fromisoformat(raw_day) >= today:
+                    return True
+            except ValueError:
+                continue
+        return False
+
+    def _publication_range(
+            self, today: date, *, force_publish: bool
+    ) -> tuple[date, date, str]:
+        weeks = max(1, int(self.config["plan"].get("publish_weeks", 2)))
+        if force_publish:
+            start = today
+            reason = "manual"
+        else:
+            # The automatic Sunday publication starts on Monday. On each Sunday,
+            # the overlapping week is retained and only the newly exposed second
+            # week normally needs to be added.
+            start = today + timedelta(days=1)
+            reason = "scheduled_weekly_publish"
+        return start, start + timedelta(days=weeks * 7 - 1), reason
+
+    def _state_sessions_between(self, start: date, end: date) -> list[dict[str, Any]]:
+        output: list[dict[str, Any]] = []
+        for record in self.state["sessions"].values():
+            session = record.get("session", {})
+            raw_day = session.get("day")
+            if not raw_day or record.get("status") not in {"planned", "scheduled", "adapted"}:
+                continue
+            try:
+                when = date.fromisoformat(raw_day)
+            except ValueError:
+                continue
+            if start <= when <= end:
+                output.append(session)
+        return sorted(
+            output,
+            key=lambda item: (item.get("day", ""), item.get("slot_index", 0)),
+        )
+
+    def ensure_horizon(
+            self, today: date, *, force_publish: bool = False
+    ) -> dict[str, Any]:
         plan = self.config["plan"]
         recent = fetch_recent_load(
             self.client, today, int(plan.get("recent_load_days", 28))
@@ -1271,13 +1650,76 @@ class AdaptivePlanner:
         base = effective_base_minutes(self.config, recent)
         self.state["recent_load"] = asdict(recent)
         self.state["effective_base_weekly_minutes"] = base
-        start = self._plan_start(today)
-        end = today + timedelta(days=int(plan["horizon_days"]) - 1)
-        sessions = build_sessions_for_range(self.config, today, end, start, base)
+        plan_start = self._plan_start(today)
+
+        due = self._publish_is_due(today)
+        bootstrap = bool(plan.get("publish_bootstrap_when_empty", True)) and not self._has_active_future_sessions(today)
+        if not force_publish and not due and not bootstrap:
+            weeks = max(1, int(plan.get("publish_weeks", 2)))
+            visible_end = today + timedelta(days=weeks * 7 - 1)
+            current = self._state_sessions_between(today, visible_end)
+            self._prune_state(today)
+            save_state(self.state_path, self.state)
+            return {
+                "status": "publication_skipped",
+                "publication": {
+                    "publish_weekday": plan.get("publish_weekday", "sunday"),
+                    "publish_weeks": weeks,
+                    "next_automatic_publish": "next configured weekday",
+                    "reason": "automatic publishing only runs on the configured weekday",
+                },
+                "range": {"from": today.isoformat(), "to": visible_end.isoformat()},
+                "effective_base_weekly_minutes": base,
+                "recent_load": asdict(recent),
+                "resolved_targets": self.config.get("_resolved_targets", {}),
+                "actions": [],
+                "planned_sessions": current,
+            }
+
+        if force_publish:
+            publish_start, publish_end, publish_reason = self._publication_range(
+                today, force_publish=True
+            )
+        elif bootstrap and not due:
+            publish_start = today
+            weeks = max(1, int(plan.get("publish_weeks", 2)))
+            publish_end = today + timedelta(days=weeks * 7 - 1)
+            publish_reason = "bootstrap_empty_calendar"
+        else:
+            publish_start, publish_end, publish_reason = self._publication_range(
+                today, force_publish=False
+            )
+
+        sessions = build_sessions_for_range(
+            self.config, publish_start, publish_end, plan_start, base
+        )
         actions: list[dict[str, Any]] = []
 
-        # Preview mode must never lose the IDs of already scheduled Garmin entries.
+        # Remove planner-owned sessions beyond the new two-week window. This is
+        # especially important when upgrading from the old 21-day horizon.
+        outside_records: list[dict[str, Any]] = []
+        for record in self.state["sessions"].values():
+            session = record.get("session", {})
+            raw_day = session.get("day")
+            if not raw_day or record.get("status") not in {"planned", "scheduled", "adapted"}:
+                continue
+            try:
+                when = date.fromisoformat(raw_day)
+            except ValueError:
+                continue
+            if when > publish_end:
+                outside_records.append(record)
+
         if not self.can_write:
+            for record in outside_records:
+                actions.append(
+                    {
+                        "action": "would_unschedule_outside_publish_window",
+                        "date": record.get("session", {}).get("day"),
+                        "name": record.get("session", {}).get("name"),
+                        "status": "preview",
+                    }
+                )
             for session in sessions:
                 record = self.state["sessions"].get(session.key)
                 fingerprint = session.fingerprint()
@@ -1293,6 +1735,7 @@ class AdaptivePlanner:
                             "date": session.day,
                             "old_name": record.get("session", {}).get("name"),
                             "new_name": session.name,
+                            "target": session.target_summary,
                             "status": "preview",
                         }
                     )
@@ -1305,6 +1748,7 @@ class AdaptivePlanner:
                             "name": session.name,
                             "sport": session.sport,
                             "duration_minutes": session.duration_minutes,
+                            "target": session.target_summary,
                             "write_enabled": self.write_enabled,
                             "dry_run": self.dry_run,
                             "status": "preview",
@@ -1312,12 +1756,27 @@ class AdaptivePlanner:
                     )
             save_state(self.state_path, self.state)
             return {
-                "range": {"from": today.isoformat(), "to": end.isoformat()},
+                "status": "preview",
+                "publication": {
+                    "reason": publish_reason,
+                    "publish_weekday": plan.get("publish_weekday", "sunday"),
+                    "publish_weeks": int(plan.get("publish_weeks", 2)),
+                },
+                "range": {
+                    "from": publish_start.isoformat(),
+                    "to": publish_end.isoformat(),
+                },
                 "effective_base_weekly_minutes": base,
                 "recent_load": asdict(recent),
+                "resolved_targets": self.config.get("_resolved_targets", {}),
                 "actions": actions,
                 "planned_sessions": [asdict(item) for item in sessions],
             }
+
+        for record in outside_records:
+            actions.append(
+                self._unschedule_record(record, "outside weekly publication window")
+            )
 
         for session in sessions:
             record = self.state["sessions"].get(session.key)
@@ -1329,19 +1788,31 @@ class AdaptivePlanner:
 
             if record and record.get("status") in {"scheduled", "adapted"}:
                 actions.append(
-                    self._unschedule_record(record, "plan definition changed")
+                    self._unschedule_record(record, "plan definition or target changed")
                 )
 
             record = self._session_record(session)
             self.state["sessions"][session.key] = record
             actions.append(self._upload_and_schedule(session, record))
 
+        self.state["last_publication"] = {
+            "date": today.isoformat(),
+            "range_from": publish_start.isoformat(),
+            "range_to": publish_end.isoformat(),
+            "reason": publish_reason,
+        }
         self._prune_state(today)
         save_state(self.state_path, self.state)
         return {
-            "range": {"from": today.isoformat(), "to": end.isoformat()},
+            "status": "published",
+            "publication": self.state["last_publication"],
+            "range": {
+                "from": publish_start.isoformat(),
+                "to": publish_end.isoformat(),
+            },
             "effective_base_weekly_minutes": base,
             "recent_load": asdict(recent),
+            "resolved_targets": self.config.get("_resolved_targets", {}),
             "actions": actions,
             "planned_sessions": [asdict(item) for item in sessions],
         }
@@ -1378,7 +1849,7 @@ class AdaptivePlanner:
 
         prefix = str(plan.get("name_prefix", "AI BASE")).strip() or "AI BASE"
         key = f"{original.day}:{original.sport}:{role}:adaptive-{index}"
-        return replace(
+        replacement = replace(
             original,
             key=key,
             role=role,
@@ -1400,7 +1871,14 @@ class AdaptivePlanner:
             ),
             intensity="easy",
             slot_index=100 + index,
+            target_kind=None,
+            target_low=None,
+            target_high=None,
+            target_unit=None,
+            target_summary=None,
+            target_source=None,
         )
+        return annotate_sessions(self.config, [replacement])[0]
 
     def adapt_today(
             self, today: date, recovery_status: str, reasons: list[str]
@@ -1553,7 +2031,7 @@ class AdaptivePlanner:
             if date.fromisoformat(key) < today
         }
         save_state(self.state_path, self.state)
-        plan_result = self.ensure_horizon(today)
+        plan_result = self.ensure_horizon(today, force_publish=True)
         return {"status": "applied", "removed": actions, "new_plan": plan_result}
 
     def status(self, today: date) -> dict[str, Any]:
@@ -1599,6 +2077,12 @@ class AdaptivePlanner:
             "coach_volume_multiplier": self.config.get("plan", {}).get("coach_volume_multiplier", 1.0),
             "sport_weight_multipliers": self.config.get("plan", {}).get("sport_weight_multipliers", {}),
             "quality_progression": self.config.get("plan", {}).get("quality_progression", {}),
+            "publication": {
+                "publish_weekday": self.config.get("plan", {}).get("publish_weekday", "sunday"),
+                "publish_weeks": self.config.get("plan", {}).get("publish_weeks", 2),
+                "last_publication": self.state.get("last_publication"),
+            },
+            "resolved_targets": self.config.get("_resolved_targets", {}),
             "plan_started_on": self.state.get("plan_started_on"),
             "effective_base_weekly_minutes": self.state.get(
                 "effective_base_weekly_minutes"
