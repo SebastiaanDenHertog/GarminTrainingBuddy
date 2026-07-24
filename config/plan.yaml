@@ -20,7 +20,7 @@ plan:
   min_weekly_minutes: 300
   max_weekly_minutes: 840
 
-  # This is linear growth per four-week block in the current code, not a
+  # This is a linear growth per four-week block in the current code, not a
   # compounding weekly increase. At 5.5%, the plan can grow toward a useful
   # full-distance peak without jumping sharply from one week to the next.
   block_growth: 0.055
@@ -100,14 +100,6 @@ training_days:
   monday: []
 
   tuesday:
-    - sport: swim
-      role: technique
-      time: "06:30"
-      primary: false
-      weight: 0.45
-      min_minutes: 20
-      max_minutes: 75
-
     - sport: run
       role: quality
       time: "14:30"
@@ -126,6 +118,14 @@ training_days:
       min_minutes: 25
       max_minutes: 120
 
+    - sport: swim
+      role: technique
+      time: "14:30"
+      primary: false
+      weight: 0.45
+      min_minutes: 20
+      max_minutes: 75
+
     - sport: strength
       role: strength
       template: full_body_a
@@ -137,13 +137,13 @@ training_days:
       max_minutes: 45
 
   thursday:
-    - sport: swim
-      role: endurance
-      time: "06:30"
-      primary: false
-      weight: 0.70
-      min_minutes: 20
-      max_minutes: 105
+    - sport: bike
+      role: quality
+      time: "10:30"
+      primary: true
+      weight: 0.80
+      min_minutes: 30
+      max_minutes: 120
 
     - sport: run
       role: easy
@@ -155,13 +155,13 @@ training_days:
       max_minutes: 75
 
   friday:
-    - sport: bike
-      role: quality
-      time: "10:30"
-      primary: true
-      weight: 0.80
-      min_minutes: 30
-      max_minutes: 120
+    - sport: swim
+      role: endurance
+      time: "06:30"
+      primary: false
+      weight: 0.70
+      min_minutes: 20
+      max_minutes: 105
 
     - sport: strength
       role: strength
@@ -182,8 +182,6 @@ training_days:
       min_minutes: 60
       max_minutes: 360
 
-    # No fixed clock time: the run should start after the bike, not at a time
-    # that becomes wrong as the long ride grows.
     - sport: run
       role: brick
       primary: false
