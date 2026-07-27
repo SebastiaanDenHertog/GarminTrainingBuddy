@@ -16,9 +16,9 @@ ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir --index-url "${TORCH_INDEX_URL}" "torch>=2.6,<3" \
     && pip install --no-cache-dir -r requirements-ai.txt
 
-COPY advisor.py planner.py feedback.py analytics.py coach.py local_ai.py dashboard.py webapp.py matching.py training_db.py benchmarks.py ./
+COPY advisor.py planner.py targets.py feedback.py analytics.py coach.py local_ai.py dashboard.py webapp.py matching.py training_db.py benchmarks.py ./
 COPY web ./web
-COPY test_planner.py test_feedback.py test_coach.py test_local_ai.py test_analytics.py test_dashboard.py test_matching.py test_training_db.py test_benchmarks.py ./
+COPY test_planner.py test_targets.py test_feedback.py test_coach.py test_local_ai.py test_analytics.py test_dashboard.py test_matching.py test_training_db.py test_benchmarks.py ./
 
 RUN useradd --create-home --uid 10001 advisor \
     && mkdir -p /data /tokens /config /models/huggingface /models/offload \
