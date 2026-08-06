@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import os
+import time
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -49,6 +50,11 @@ class Advice:
 def env_float(name: str, default: float) -> float:
     raw = os.getenv(name)
     return default if raw is None else float(raw)
+
+
+def env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    return default if raw is None else int(raw)
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -189,9 +195,118 @@ def extract_rhr(payload: Any) -> float | None:
     return None
 
 
-def fetch_metrics(client: Garmin, today: date, data_dir: Path) -> Metrics:
+_UNSET = object()
+
+
+def _sleep_data_ready(
+        sleep_hours: float | None,
+        sleep_score: float | None,
+        require_score: bool,
+) -> bool:
+    if sleep_hours is None or sleep_hours <= 0:
+        return False
+    return sleep_score is not None if require_score else True
+
+
+def wait_for_sleep_data(
+        client: Garmin,
+        today: date,
+        *,
+        sleeper=time.sleep,
+        monotonic=time.monotonic,
+) -> tuple[Any, dict[str, Any]]:
+    """Poll Garmin until today's sleep duration is available.
+
+    The normal morning workflow is deliberately paused here, so calendar
+    adaptations happen once and only after sleep data is available. A finite
+    timeout is the safe default; set SLEEP_RETRY_MAX_MINUTES=0 to wait without
+    a timeout.
+    """
+    enabled = env_bool("SLEEP_RETRY_ENABLED", True)
+    retry_minutes = max(1, env_int("SLEEP_RETRY_MINUTES", 10))
+    max_wait_minutes = max(0, env_int("SLEEP_RETRY_MAX_MINUTES", 240))
+    require_score = env_bool("SLEEP_RETRY_REQUIRE_SCORE", False)
+
+    retry_seconds = retry_minutes * 60
+    max_wait_seconds = max_wait_minutes * 60
+    started = monotonic()
+    attempts = 0
+    latest_payload: Any = None
+
+    while True:
+        attempts += 1
+        latest_payload = safe_call(
+            f"sleep attempt {attempts}",
+            client.get_sleep_data,
+            today.isoformat(),
+        )
+        sleep_hours, sleep_score = extract_sleep(latest_payload)
+        elapsed_seconds = max(0, int(monotonic() - started))
+
+        if _sleep_data_ready(sleep_hours, sleep_score, require_score):
+            result = {
+                "status": "ready",
+                "attempts": attempts,
+                "waited_minutes": round(elapsed_seconds / 60, 1),
+                "sleep_hours": sleep_hours,
+                "sleep_score": sleep_score,
+                "require_score": require_score,
+            }
+            LOG.info(
+                "Sleep data ready after %d attempt(s) and %.1f minute(s)",
+                attempts,
+                result["waited_minutes"],
+            )
+            return latest_payload, result
+
+        if not enabled:
+            return latest_payload, {
+                "status": "disabled_missing",
+                "attempts": attempts,
+                "waited_minutes": round(elapsed_seconds / 60, 1),
+                "sleep_hours": sleep_hours,
+                "sleep_score": sleep_score,
+                "require_score": require_score,
+            }
+
+        if max_wait_seconds > 0 and elapsed_seconds >= max_wait_seconds:
+            LOG.warning(
+                "Sleep data was still unavailable after %.1f minute(s); "
+                "continuing with the other recovery signals",
+                elapsed_seconds / 60,
+            )
+            return latest_payload, {
+                "status": "timeout",
+                "attempts": attempts,
+                "waited_minutes": round(elapsed_seconds / 60, 1),
+                "sleep_hours": sleep_hours,
+                "sleep_score": sleep_score,
+                "require_score": require_score,
+                "max_wait_minutes": max_wait_minutes,
+            }
+
+        wait_seconds = retry_seconds
+        if max_wait_seconds > 0:
+            remaining = max_wait_seconds - elapsed_seconds
+            wait_seconds = min(wait_seconds, remaining)
+
+        LOG.info(
+            "Sleep data is not available yet (attempt %d). Retrying in %.1f minute(s)",
+            attempts,
+            wait_seconds / 60,
+        )
+        sleeper(wait_seconds)
+
+
+def fetch_metrics(
+        client: Garmin,
+        today: date,
+        data_dir: Path,
+        sleep_payload: Any = _UNSET,
+) -> Metrics:
     day = today.isoformat()
-    sleep_payload = safe_call("sleep", client.get_sleep_data, day)
+    if sleep_payload is _UNSET:
+        sleep_payload = safe_call("sleep", client.get_sleep_data, day)
     hrv_payload = safe_call("HRV", client.get_hrv_data, day)
     readiness_method = getattr(
         client,
@@ -388,6 +503,7 @@ def write_report(
         plan_result: dict[str, Any],
         adaptation: dict[str, Any],
         coach_review: dict[str, Any] | None = None,
+        sleep_wait: dict[str, Any] | None = None,
 ) -> tuple[Path, Path]:
     report_dir = Path(os.getenv("DATA_DIR", "/data")) / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -398,6 +514,7 @@ def write_report(
         "plan": plan_result,
         "adaptation": adaptation,
         "coach_review": coach_review,
+        "sleep_wait": sleep_wait,
     }
     json_path = report_dir / f"{metrics.day}.json"
     md_path = report_dir / f"{metrics.day}.md"
@@ -437,6 +554,12 @@ def write_report(
 - Resting HR: {metrics.resting_hr} bpm
 - Seven-day RHR baseline: {metrics.resting_hr_baseline} bpm
 - RHR difference: {metrics.resting_hr_delta} bpm
+
+### Sleep-data polling
+
+```json
+{json.dumps(sleep_wait, indent=2, default=str)}
+```
 
 ### Subjective feedback from Garmin activity descriptions
 
@@ -489,13 +612,15 @@ def run_once() -> int:
     client = build_client(False)
     config = load_plan_config(os.getenv("PLAN_CONFIG", "/config/plan.yaml"))
 
+    sleep_payload, sleep_wait = wait_for_sleep_data(client, today)
+
     coach_review: dict[str, Any] | None = None
     if _review_day_matches(today):
         coach_review = run_weekly_review(
             client, today, data_dir, config, force=False
         )
 
-    metrics = fetch_metrics(client, today, data_dir)
+    metrics = fetch_metrics(client, today, data_dir, sleep_payload=sleep_payload)
     advice = decide(metrics)
     planner = AdaptivePlanner(
         client=client,
@@ -507,7 +632,12 @@ def run_once() -> int:
     plan_result = planner.ensure_horizon(today)
     adaptation = planner.adapt_today(today, advice.status, advice.reasons)
     json_path, md_path = write_report(
-        metrics, advice, plan_result, adaptation, coach_review
+        metrics,
+        advice,
+        plan_result,
+        adaptation,
+        coach_review,
+        sleep_wait,
     )
     measurement_result: dict[str, Any] | None = None
     if coach_review and coach_review.get("analysis_file"):
@@ -540,6 +670,7 @@ def run_once() -> int:
                 "recovery_status": advice.status,
                 "recommendation": advice.recommendation,
                 "subjective_feedback": metrics.subjective_feedback,
+                "sleep_wait": sleep_wait,
                 "coach_review": coach_review,
                 "adaptation": adaptation,
                 "plan_actions": plan_result.get("actions", []),
