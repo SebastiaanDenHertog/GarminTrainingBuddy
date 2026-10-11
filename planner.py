@@ -78,6 +78,12 @@ def is_missing_workout_schedule_error(exc: Exception) -> bool:
     )
 
 
+def is_missing_workout_error(exc: Exception) -> bool:
+    """Return True only for Garmin's idempotent missing-workout response."""
+    message = str(exc).strip().lower()
+    return "404" in message and "workout" in message
+
+
 @dataclass(frozen=True)
 class Session:
     key: str
@@ -1510,6 +1516,7 @@ class AdaptivePlanner:
             "status": "preview",
         }
         scheduled_id = self._find_scheduled_id(record)
+        workout_id = first_positive_int(record, ("workout_id", "workoutId"))
         if self.can_write and scheduled_id:
             try:
                 self.client.unschedule_workout(scheduled_id)
@@ -1578,11 +1585,23 @@ class AdaptivePlanner:
             if session.get("day"):
                 self.calendar.invalidate(date.fromisoformat(session["day"]))
             action["scheduled_workout_id"] = scheduled_id
-            record["status"] = "cancelled"
-            record["cancel_reason"] = reason
-            record["cancelled_at"] = datetime.now().astimezone().isoformat()
         elif self.can_write and not scheduled_id:
             action["status"] = "not_found"
+        else:
+            return action
+
+        if self.can_write and workout_id:
+            try:
+                self.client.delete_workout(workout_id)
+            except Exception as exc:
+                if not is_missing_workout_error(exc):
+                    raise
+                action["delete_status"] = "already_missing"
+            else:
+                action["delete_status"] = "applied"
+            action["workout_id"] = workout_id
+
+        if self.can_write:
             record["status"] = "cancelled"
             record["cancel_reason"] = reason
             record["cancelled_at"] = datetime.now().astimezone().isoformat()

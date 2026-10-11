@@ -204,6 +204,86 @@ class PlannerTests(unittest.TestCase):
             self.assertEqual(result["range"]["from"], "2026-07-27")
             self.assertEqual(result["range"]["to"], "2026-08-09")
 
+    def test_replacing_a_session_deletes_the_old_workout_template(self) -> None:
+        class Client:
+            def __init__(self) -> None:
+                self.deleted_workouts: list[int] = []
+                self.unscheduled_workouts: list[int] = []
+                self.uploaded_workouts = 5000
+                self.scheduled_workouts = 7000
+
+            def get_activities_by_date(self, *_args, **_kwargs):
+                return []
+
+            def get_scheduled_workouts(self, *_args, **_kwargs):
+                return []
+
+            def upload_running_workout(self, _workout):
+                self.uploaded_workouts += 1
+                return {"workoutId": self.uploaded_workouts}
+
+            def upload_cycling_workout(self, _workout):
+                self.uploaded_workouts += 1
+                return {"workoutId": self.uploaded_workouts}
+
+            def upload_swimming_workout(self, _workout):
+                self.uploaded_workouts += 1
+                return {"workoutId": self.uploaded_workouts}
+
+            def upload_workout(self, _payload):
+                self.uploaded_workouts += 1
+                return {"workoutId": self.uploaded_workouts}
+
+            def schedule_workout(self, workout_id, _day):
+                self.scheduled_workouts += 1
+                return {
+                    "workoutId": workout_id,
+                    "scheduledWorkoutId": self.scheduled_workouts,
+                }
+
+            def unschedule_workout(self, scheduled_workout_id):
+                self.unscheduled_workouts.append(int(scheduled_workout_id))
+                return {}
+
+            def delete_workout(self, workout_id):
+                self.deleted_workouts.append(int(workout_id))
+                return {}
+
+        config = copy.deepcopy(DEFAULT_CONFIG)
+        config["plan"]["publish_weeks"] = 1
+        config["plan"]["name_prefix"] = "OLD"
+        today = date(2026, 7, 26)
+        with tempfile.TemporaryDirectory() as tmp:
+            client = Client()
+            planner = AdaptivePlanner(
+                client=client,
+                config=config,
+                data_dir=Path(tmp),
+                write_enabled=True,
+                dry_run=False,
+            )
+            sessions = build_sessions_for_range(planner.config, today, today + timedelta(days=6), today, 360)
+            original = sessions[0]
+            record = planner._session_record(original)
+            record["status"] = "scheduled"
+            record["workout_id"] = 1234
+            record["scheduled_workout_id"] = 4321
+            planner.state["sessions"][original.key] = record
+
+            planner.config["plan"]["name_prefix"] = "NEW"
+            result = planner.ensure_horizon(today, force_publish=True)
+
+            self.assertIn(4321, client.unscheduled_workouts)
+            self.assertIn(1234, client.deleted_workouts)
+            self.assertTrue(
+                any(
+                    action.get("session_key") == original.key
+                    and action.get("workout_id") == 1234
+                    and action.get("delete_status") == "applied"
+                    for action in result["actions"]
+                )
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
