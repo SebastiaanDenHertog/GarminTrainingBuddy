@@ -65,9 +65,8 @@ SEVERITY = {"UNKNOWN": 0, "GREEN": 0, "AMBER": 1, "RED": 2}
 
 
 def is_missing_workout_schedule_error(exc: Exception) -> bool:
-    """Return True when a scheduled Garmin workout is already absent."""
-
-    if isinstance(exc, GarminConnectNotFoundError):
+    """Return True when a Garmin scheduled workout is already absent."""
+    if exc.__class__.__name__ == "GarminConnectNotFoundError":
         return True
 
     message = str(exc).strip().lower()
@@ -77,15 +76,21 @@ def is_missing_workout_schedule_error(exc: Exception) -> bool:
         and (
             "workout schedule" in message
             or "not found" in message
-            or "no workout found" in message
         )
     )
 
 
 def is_missing_workout_error(exc: Exception) -> bool:
-    """Return True only for Garmin's idempotent missing-workout response."""
+    """Return True when a Garmin workout definition is already absent."""
+
+    # Current garminconnect versions use GarminConnectNotFoundError,
+    # whose message may simply be "API Error 404".
+    if exc.__class__.__name__ == "GarminConnectNotFoundError":
+        return True
+
+    # Keep this compatible with older garminconnect versions too.
     message = str(exc).strip().lower()
-    return "404" in message and "workout" in message
+    return "404" in message
 
 
 @dataclass(frozen=True)
