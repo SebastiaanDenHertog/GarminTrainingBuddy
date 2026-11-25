@@ -34,6 +34,7 @@ from garminconnect.workout import (
     create_repeat_group,
     create_warmup_step,
 )
+from garminconnect.exceptions import GarminConnectNotFoundError
 
 LOG = logging.getLogger("garmin-adaptive-planner")
 
@@ -64,17 +65,20 @@ SEVERITY = {"UNKNOWN": 0, "GREEN": 0, "AMBER": 1, "RED": 2}
 
 
 def is_missing_workout_schedule_error(exc: Exception) -> bool:
-    """Return True only for Garmin's idempotent missing-schedule response.
+    """Return True when a scheduled Garmin workout is already absent."""
 
-    A rebuild can be interrupted after Garmin removes an entry but before the
-    updated local state is saved. The next rebuild then sees the stale schedule
-    ID and Garmin correctly returns HTTP 404. Treat that one precise response as
-    "already removed" while re-raising every other API failure.
-    """
+    if isinstance(exc, GarminConnectNotFoundError):
+        return True
+
     message = str(exc).strip().lower()
+
     return (
-            "404" in message
-            and "no workout found for workout schedule" in message
+        "404" in message
+        and (
+            "workout schedule" in message
+            or "not found" in message
+            or "no workout found" in message
+        )
     )
 
 
